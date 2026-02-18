@@ -4,5 +4,4 @@ __pycache__/
 *_output/
 dist/
 *.egg-info/
-tests/samples/
 tests/test_output/
