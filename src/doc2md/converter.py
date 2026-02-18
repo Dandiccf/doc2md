@@ -30,7 +30,7 @@ from docling_core.types.doc.labels import PictureClassificationLabel
 from pydantic import AnyUrl
 
 from doc2md.config import PipelineConfig
-from doc2md.serializers import DescriptionAfterImageDocSerializer
+from doc2md.serializers import DescriptionEnrichedImageDocSerializer
 from doc2md.utils import (
     ConversionMetadata,
     ElementCounts,
@@ -147,11 +147,26 @@ class DocumentPipeline:
                 api_headers = {"Authorization": f"Bearer {cfg.openai_api_key}"}
                 api_params = {"model": cfg.openai_model}
 
+            prompt = cfg.picture_description_prompt
+            if cfg.structured_description:
+                prompt = (
+                    "Analyze this image and respond with a JSON object containing "
+                    "exactly two fields:\n"
+                    '- "summary": A concise 1-2 sentence description of what the '
+                    "image shows and its key message. Use only plain text — letters, "
+                    "numbers, periods, commas, hyphens, and spaces. No brackets, "
+                    "backslashes, or special markdown characters.\n"
+                    '- "detail": A thorough explanation of the image content, key '
+                    "findings, data, and takeaways. Focus on meaning rather than "
+                    "visual styling."
+                )
+                api_params["response_format"] = {"type": "json_object"}
+
             opts.picture_description_options = PictureDescriptionApiOptions(
                 url=api_url,
                 headers=api_headers,
                 params=api_params,
-                prompt=cfg.picture_description_prompt,
+                prompt=prompt,
                 timeout=cfg.picture_description_timeout,
                 concurrency=cfg.picture_description_concurrency,
                 scale=cfg.picture_description_scale,
@@ -220,7 +235,7 @@ class DocumentPipeline:
             reference_path=ref_path,
         )
 
-        serializer = DescriptionAfterImageDocSerializer(
+        serializer = DescriptionEnrichedImageDocSerializer(
             doc=ref_doc,
             params=MarkdownParams(
                 image_mode=ImageRefMode.REFERENCED,

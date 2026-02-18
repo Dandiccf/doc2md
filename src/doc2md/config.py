@@ -55,6 +55,7 @@ class PipelineConfig:
     # -- Picture description ------------------------------------------------
     do_picture_description: bool = True
     do_picture_classification: bool = True
+    structured_description: bool = False  # Request JSON {summary, detail} from vision model
     picture_description_provider: str = "openai"  # "openai" or "local" (Ollama, LM Studio, etc.)
     picture_description_prompt: str = (
         "Explain what this image conveys. Focus on the meaning, "
