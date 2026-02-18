@@ -54,7 +54,7 @@ class PipelineConfig:
     # -- Picture description ------------------------------------------------
     do_picture_description: bool = True
     do_picture_classification: bool = True
-    picture_description_provider: str = "openai"  # "openai"
+    picture_description_provider: str = "openai"  # "openai" or "local" (Ollama, LM Studio, etc.)
     picture_description_prompt: str = (
         "Explain what this image conveys. Focus on the meaning, "
         "key findings, and takeaways rather than describing visual "
@@ -72,12 +72,10 @@ class PipelineConfig:
     classification_min_confidence: float = 0.5
     # classification_allow: list[str] | None = None
 
-    # Custom / LM Studio provider settings (uncomment to use):
-    # custom_description_url: str = "http://127.0.0.1:1234/v1/chat/completions"
-    # custom_description_headers: dict[str, str] = field(default_factory=dict)
-    # custom_description_params: dict[str, Any] = field(default_factory=lambda: {"model": "glm-4.5-flash", "max_completion_tokens": 4096, "seed": 42})
-    # custom_description_timeout: int = 90
-    # custom_description_concurrency: int = 1
+    # -- Local provider settings (Ollama, LM Studio, any OpenAI-compatible) -
+    local_url: str = "http://localhost:11434/v1/chat/completions"  # Ollama default
+    local_model: str = ""  # e.g. "llava", "granite3.2-vision", "gemma3"
+    local_params: dict = field(default_factory=dict)  # extra params, e.g. {"max_completion_tokens": 4096, "seed": 42}
 
     # -- Enrichment ---------------------------------------------------------
     do_code_enrichment: bool = False
@@ -113,7 +111,9 @@ class PipelineConfig:
     openai_model: str = ""
 
     def __post_init__(self) -> None:
-        if self.do_picture_description and self.picture_description_provider == "openai":
+        if not self.do_picture_description:
+            return
+        if self.picture_description_provider == "openai":
             if not self.openai_api_key:
                 self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
                 if not self.openai_api_key:
@@ -122,6 +122,12 @@ class PipelineConfig:
                     )
             if not self.openai_model:
                 self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        elif self.picture_description_provider == "local":
+            if not self.local_model:
+                raise RuntimeError(
+                    "local_model must be set when using the 'local' provider "
+                    "(e.g. 'llava', 'granite3.2-vision')"
+                )
 
     def to_dict(self) -> dict:
         """Return a serialisable dict of the active configuration."""
@@ -137,6 +143,8 @@ class PipelineConfig:
             "do_picture_description": self.do_picture_description,
             "do_picture_classification": self.do_picture_classification,
             "picture_description_provider": self.picture_description_provider,
+            "local_url": self.local_url,
+            "local_model": self.local_model,
             "do_code_enrichment": self.do_code_enrichment,
             "do_formula_enrichment": self.do_formula_enrichment,
             "allowed_formats": self.allowed_formats,

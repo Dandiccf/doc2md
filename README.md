@@ -1,6 +1,6 @@
 # doc2md
 
-Standalone document-to-markdown conversion pipeline powered by [Docling](https://github.com/docling-project/docling). Extracts text, tables, and images from PDFs, DOCX, PPTX, and more — with optional AI-powered image descriptions via OpenAI.
+Standalone document-to-markdown conversion pipeline powered by [Docling](https://github.com/docling-project/docling). Extracts text, tables, and images from PDFs, DOCX, PPTX, and more — with optional AI-powered image descriptions via OpenAI or a local vision model (Ollama, LM Studio).
 
 ## Installation
 
@@ -122,13 +122,13 @@ result = convert("document.pdf", config=config)
 
 ### Picture descriptions (AI-powered)
 
-Requires `OPENAI_API_KEY` set in environment or `.env` file. Disabled with `do_picture_description=False` (no API key needed).
+Disabled with `do_picture_description=False` (no API key or server needed).
 
 | Parameter | Default | Choices / Type | Description |
 |---|---|---|---|
 | `do_picture_description` | `True` | bool | Generate AI descriptions for images. |
 | `do_picture_classification` | `True` | bool | Classify images (logo, chart, photo, etc.) to filter descriptions. |
-| `picture_description_provider` | `"openai"` | `"openai"` | API provider for descriptions. |
+| `picture_description_provider` | `"openai"` | `"openai"`, `"local"` | `"openai"` uses the OpenAI API. `"local"` uses any OpenAI-compatible server (Ollama, LM Studio, etc.). |
 | `picture_description_prompt` | *"Explain what this image conveys..."* | str | Prompt sent to the vision model. |
 | `picture_description_timeout` | `60` | int (seconds) | Timeout per description request. |
 | `picture_description_concurrency` | `2` | int | Parallel description requests. |
@@ -150,24 +150,57 @@ Requires `OPENAI_API_KEY` set in environment or `.env` file. Disabled with `do_p
 |---|---|---|---|
 | `allowed_formats` | `["pdf", "image", "docx", "pptx", "xlsx", "html", "csv", "md", "asciidoc"]` | list of str | Document formats the pipeline will accept. |
 
-### OpenAI credentials
+### OpenAI provider (`"openai"`, default)
 
 | Parameter | Default | Source | Description |
 |---|---|---|---|
-| `openai_api_key` | `""` | `OPENAI_API_KEY` env var / `.env` | Required when `do_picture_description=True`. |
+| `openai_api_key` | `""` | `OPENAI_API_KEY` env var / `.env` | Required when provider is `"openai"`. |
 | `openai_model` | `""` | `OPENAI_MODEL` env var / `.env` (fallback: `"gpt-4o"`) | Vision model for descriptions. |
-
-Set via environment:
 
 ```bash
 cp .env.example .env
 # Edit .env with your key
 ```
 
-Or pass directly:
-
 ```python
 config = PipelineConfig(openai_api_key="sk-...", openai_model="gpt-4o")
+```
+
+### Local provider (`"local"` — Ollama, LM Studio, etc.)
+
+Any server that exposes an OpenAI-compatible `/v1/chat/completions` endpoint.
+
+| Parameter | Default | Type | Description |
+|---|---|---|---|
+| `local_url` | `"http://localhost:11434/v1/chat/completions"` | str | Server URL. Ollama default shown; LM Studio typically uses `http://localhost:1234/v1/chat/completions`. |
+| `local_model` | `""` | str | **Required.** Model name, e.g. `"llava"`, `"granite3.2-vision"`, `"gemma3"`. |
+| `local_params` | `{}` | dict | Extra request params, e.g. `{"max_completion_tokens": 4096, "seed": 42}`. |
+
+**Ollama example:**
+
+```python
+config = PipelineConfig(
+    picture_description_provider="local",
+    local_url="http://localhost:11434/v1/chat/completions",
+    local_model="llava",
+    picture_description_timeout=90,
+    picture_description_concurrency=1,
+)
+result = convert("document.pdf", config=config)
+```
+
+**LM Studio example:**
+
+```python
+config = PipelineConfig(
+    picture_description_provider="local",
+    local_url="http://localhost:1234/v1/chat/completions",
+    local_model="granite3.2-vision",
+    local_params={"max_completion_tokens": 4096, "seed": 42},
+    picture_description_timeout=90,
+    picture_description_concurrency=1,
+)
+result = convert("document.pdf", config=config)
 ```
 
 ## Output structure

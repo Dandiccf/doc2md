@@ -137,10 +137,19 @@ class DocumentPipeline:
                 if label in _CLASSIFICATION_LABEL_MAP
             ]
 
+            if cfg.picture_description_provider == "local":
+                api_url = AnyUrl(cfg.local_url)
+                api_headers: dict = {}
+                api_params: dict = {"model": cfg.local_model, **cfg.local_params}
+            else:
+                api_url = AnyUrl("https://api.openai.com/v1/chat/completions")
+                api_headers = {"Authorization": f"Bearer {cfg.openai_api_key}"}
+                api_params = {"model": cfg.openai_model}
+
             opts.picture_description_options = PictureDescriptionApiOptions(
-                url=AnyUrl("https://api.openai.com/v1/chat/completions"),
-                headers={"Authorization": f"Bearer {cfg.openai_api_key}"},
-                params={"model": cfg.openai_model},
+                url=api_url,
+                headers=api_headers,
+                params=api_params,
                 prompt=cfg.picture_description_prompt,
                 timeout=cfg.picture_description_timeout,
                 concurrency=cfg.picture_description_concurrency,
