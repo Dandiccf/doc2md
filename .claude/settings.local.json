@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docling-project.github.io)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(uv:*)",
+      "Bash(sw_vers:*)",
+      "Bash(sysctl:*)",
+      "WebFetch(domain:www.aidoczh.com)",
+      "mcp__ide__getDiagnostics",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__query-docs",
+      "Bash(python -m pip show:*)",
+      "Bash(python -m pip:*)",
+      "Bash(pip install:*)",
+      "Bash(/Users/macdandi/Developer/Document2Markdown/.venv/bin/python -m pip:*)",
+      "Bash(/Users/macdandi/Developer/Document2Markdown/.venv/bin/pip list:*)",
+      "Bash(/Users/macdandi/Developer/Document2Markdown/.venv/bin/python:*)",
+      "WebFetch(domain:pypi.org)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)"
+    ]
+  },
+  "enabledPlugins": {
+    "context7@claude-plugins-official": true
+  }
+}
