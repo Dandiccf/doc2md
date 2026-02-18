@@ -129,14 +129,38 @@ Disabled with `do_picture_description=False` (no API key or server needed).
 |---|---|---|---|
 | `do_picture_description` | `True` | bool | Generate AI descriptions for images. |
 | `do_picture_classification` | `True` | bool | Classify images (logo, chart, photo, etc.) to filter descriptions. |
+| `structured_description` | `False` | bool | Request JSON `{summary, detail}` from the vision model. `summary` becomes concise alt text in the image tag, `detail` becomes a blockquote. Falls back gracefully to plain text if the model doesn't return valid JSON. See [Structured descriptions](#structured-descriptions) below. |
 | `picture_description_provider` | `"openai"` | `"openai"`, `"local"` | `"openai"` uses the OpenAI API. `"local"` uses any OpenAI-compatible server (Ollama, LM Studio, etc.). |
-| `picture_description_prompt` | *"Explain what this image conveys..."* | str | Prompt sent to the vision model. |
+| `picture_description_prompt` | *"Explain what this image conveys..."* | str | Prompt sent to the vision model. Overridden automatically when `structured_description=True`. |
 | `picture_description_timeout` | `60` | int (seconds) | Timeout per description request. |
 | `picture_description_concurrency` | `2` | int | Parallel description requests. |
 | `picture_description_scale` | `2.0` | float | Image scale sent to the vision model. |
 | `picture_area_threshold` | `0.01` | float | Minimum image area (fraction of page) to describe. |
 | `classification_deny` | `["logo", "icon", "signature", "stamp", "qr_code", "bar_code"]` | list of str | Skip descriptions for these image types. |
 | `classification_min_confidence` | `0.5` | float | Minimum confidence to apply classification filter. |
+
+#### Structured descriptions
+
+By default, image descriptions are placed as a blockquote after a generic `![Image](url)` tag. When `structured_description=True`, the vision model returns a JSON object with two fields, producing richer Markdown:
+
+```markdown
+![A bar chart showing Q3 revenue grew 15% YoY across all regions.](http://example.com/image.png)
+
+> The image presents a detailed bar chart comparing quarterly revenue across four
+> global regions. North America leads with $4.2M (+18%), followed by Europe...
+```
+
+- **`summary`** becomes the image alt text — concise and atomic with the image tag (stays in the same chunk during text splitting).
+- **`detail`** becomes the blockquote — thorough description useful for RAG retrieval.
+
+This uses OpenAI's `response_format: {"type": "json_object"}` for guaranteed valid JSON at no extra cost. If the model returns plain text (e.g. a local model without JSON mode), it falls back to the original behavior (generic alt text + full text blockquote).
+
+```python
+config = PipelineConfig(
+    structured_description=True,  # requires do_picture_description=True (default)
+)
+result = convert("report.pdf", config=config)
+```
 
 ### Enrichment
 
