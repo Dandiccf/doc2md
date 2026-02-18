@@ -17,6 +17,7 @@ vlm = ["docling[vlm]>=2.74.0"]
 all = [
     "docling[easyocr,rapidocr,tesserocr,vlm,ocrmac]>=2.74.0",
 ]
+test = ["pytest>=8.0"]
 
 [build-system]
 requires = ["hatchling"]

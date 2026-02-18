@@ -96,6 +96,21 @@ output_dir/
 └── metadata.json      # Conversion metadata (timing, element counts)
 ```
 
+## Testing
+
+Install test dependencies and run the suite:
+
+```bash
+uv sync --extra test
+uv run pytest tests/ -v
+```
+
+Tests automatically download sample documents (a PDF and an image) on first run. The image-description tests require `OPENAI_API_KEY` and are skipped otherwise:
+
+```bash
+OPENAI_API_KEY=sk-... uv run pytest tests/ -v
+```
+
 ## Supported formats
 
 PDF, DOCX, PPTX, XLSX, HTML, CSV, Markdown, AsciiDoc, and images (PNG, JPG, TIFF, BMP).
