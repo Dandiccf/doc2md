@@ -1,6 +1,6 @@
 [project]
 name = "doc2md"
-version = "0.1.0"
+version = "0.2.0"
 description = "Standalone document-to-markdown conversion pipeline powered by Docling"
 requires-python = ">=3.11"
 dependencies = [
