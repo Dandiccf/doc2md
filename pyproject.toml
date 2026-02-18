@@ -1,0 +1,26 @@
+[project]
+name = "doc2md"
+version = "0.1.0"
+description = "Standalone document-to-markdown conversion pipeline powered by Docling"
+requires-python = ">=3.11"
+dependencies = [
+    "docling[ocrmac]>=2.74.0",
+    "Pillow>=10.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+easyocr = ["docling[easyocr]>=2.74.0"]
+rapidocr = ["docling[rapidocr]>=2.74.0"]
+tesseract = ["docling[tesserocr]>=2.74.0"]
+vlm = ["docling[vlm]>=2.74.0"]
+all = [
+    "docling[easyocr,rapidocr,tesserocr,vlm,ocrmac]>=2.74.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doc2md"]
