@@ -14,10 +14,7 @@ TEST_OUTPUT_DIR = Path(__file__).parent / "test_output"
 
 SAMPLE_URLS = {
     "academic_paper.pdf": "https://arxiv.org/pdf/2206.01062",
-    "sample_image.jpg": (
-        "https://www.archives.gov/files/founding-docs/"
-        "declaration_of_independence_stone_630.jpg"
-    ),
+    "sample_image.jpg": ("https://www.archives.gov/files/founding-docs/" "declaration_of_independence_stone_630.jpg"),
 }
 
 

@@ -1,5 +1,7 @@
 """doc2md - Standalone document-to-markdown conversion pipeline."""
 
+from pathlib import Path
+
 from doc2md.config import PipelineConfig
 from doc2md.converter import ConversionResult, DocumentPipeline
 from doc2md.utils import setup_logging
@@ -14,8 +16,8 @@ __all__ = [
 
 
 def convert(
-    source: str,
-    output_dir: str | None = None,
+    source: str | Path,
+    output_dir: str | Path | None = None,
     config: PipelineConfig | None = None,
 ) -> ConversionResult:
     """One-liner convenience function to convert a document to markdown.
