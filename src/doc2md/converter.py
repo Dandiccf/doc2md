@@ -194,16 +194,25 @@ class DocumentPipeline:
 
     @staticmethod
     def _rewrite_image_paths(md_text: str, prefix: str) -> str:
-        """Prepend *prefix* to every Markdown image path."""
+        """Replace Markdown image paths with ``prefix/<filename>``.
+
+        When a prefix is configured (e.g. a URL path for serving images),
+        only the filename portion of each image reference is kept — the
+        original directory path (which may be an absolute temp-dir path
+        from Docling) is stripped.
+        """
         prefix = prefix.rstrip("/")
         return re.sub(
             r"(!\[[^\]]*\]\()([^)]+)(\))",
-            lambda m: f"{m.group(1)}{prefix}/{m.group(2)}{m.group(3)}",
+            lambda m: f"{m.group(1)}{prefix}/{Path(m.group(2)).name}{m.group(3)}",
             md_text,
         )
 
-    def _export_markdown_with_descriptions(self, doc, md_path: Path) -> None:
-        """Export markdown using a custom serializer that places descriptions after images."""
+    def _export_markdown_with_descriptions(self, doc, md_path: Path) -> Path:
+        """Export markdown using a custom serializer that places descriptions after images.
+
+        Returns the artifacts directory containing the referenced image files.
+        """
         artifacts_dir, ref_path = doc._get_output_paths(md_path)  # pylint: disable=protected-access
         artifacts_dir.mkdir(parents=True, exist_ok=True)
         ref_doc = doc._make_copy_with_refmode(  # pylint: disable=protected-access
@@ -221,6 +230,7 @@ class DocumentPipeline:
         if self.config.image_path_prefix:
             md_text = self._rewrite_image_paths(md_text, self.config.image_path_prefix)
         md_path.write_text(md_text, encoding="utf-8")
+        return artifacts_dir
 
     def convert(self, source: str | Path, output_dir: str | Path | None = None) -> ConversionResult:
         """Convert a single document and save all outputs.
@@ -311,9 +321,14 @@ class DocumentPipeline:
                             )
 
                 if cfg.do_picture_description:
-                    self._export_markdown_with_descriptions(
+                    artifacts_dir = self._export_markdown_with_descriptions(
                         conv_res.document, md_path,
                     )
+                    # When image_path_prefix is set, callers will serve images
+                    # by filename from a remote store — point images_dir to the
+                    # artifacts directory whose filenames match the markdown refs.
+                    if cfg.image_path_prefix:
+                        result.images_dir = artifacts_dir
                 else:
                     conv_res.document.save_as_markdown(
                         md_path,
@@ -325,6 +340,11 @@ class DocumentPipeline:
                             md_text, cfg.image_path_prefix,
                         )
                         md_path.write_text(md_text, encoding="utf-8")
+                        # Point images_dir to the artifacts directory whose
+                        # filenames match the rewritten markdown references.
+                        artifacts_dir = output_dir / f"{md_path.stem}_artifacts"
+                        if artifacts_dir.exists():
+                            result.images_dir = artifacts_dir
             else:
                 md_text = conv_res.document.export_to_markdown()
                 md_path.write_text(md_text, encoding="utf-8")

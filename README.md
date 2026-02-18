@@ -119,7 +119,7 @@ result = convert("document.pdf", config=config)
 |---|---|---|---|
 | `generate_images` | `True` | bool | Extract images from the document. |
 | `images_scale` | `2.0` | float | Scale factor for extracted images. Higher = better quality, larger files. |
-| `image_path_prefix` | `""` | str | Prefix prepended to image paths in the Markdown output, e.g. `"/assets"` or `"https://cdn.example.com"`. Empty means no prefix (Docling's default relative paths). |
+| `image_path_prefix` | `""` | str | URL prefix for image paths in the Markdown output. When set, each image reference becomes `prefix/filename.png` (directory paths are stripped, only the filename is kept). E.g. `"/assets"` produces `![img](/assets/image_000.png)`. Empty means no rewriting (Docling's default paths). |
 
 ### Picture descriptions (AI-powered)
 
@@ -208,11 +208,14 @@ result = convert("document.pdf", config=config)
 
 ```
 output_dir/
-├── output.md          # Markdown with images and descriptions
-├── output.json        # Full structured JSON export
-├── images/            # Extracted images (picture_000.png, ...)
-└── metadata.json      # Conversion metadata (timing, element counts)
+├── output.md               # Markdown with images and descriptions
+├── output.json             # Full structured JSON export
+├── output_artifacts/       # Images referenced in the Markdown (Docling hash names)
+├── images/                 # Clean extracted images (picture_000.png, ...)
+└── metadata.json           # Conversion metadata (timing, element counts)
 ```
+
+`result.images_dir` points to `images/` by default. When `image_path_prefix` is set, it points to `output_artifacts/` instead — these are the files whose names match the rewritten Markdown image references, ready for upload to a remote store.
 
 ## Testing
 
