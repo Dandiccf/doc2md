@@ -49,6 +49,7 @@ class PipelineConfig:
     # -- Images -------------------------------------------------------------
     generate_images: bool = True
     images_scale: float = 2.0
+    image_path_prefix: str = ""  # prefix prepended to image paths in markdown, e.g. "/assets" or "https://cdn.example.com"
     # generate_page_images: bool = False
 
     # -- Picture description ------------------------------------------------
@@ -145,6 +146,7 @@ class PipelineConfig:
             "picture_description_provider": self.picture_description_provider,
             "local_url": self.local_url,
             "local_model": self.local_model,
+            "image_path_prefix": self.image_path_prefix,
             "do_code_enrichment": self.do_code_enrichment,
             "do_formula_enrichment": self.do_formula_enrichment,
             "allowed_formats": self.allowed_formats,

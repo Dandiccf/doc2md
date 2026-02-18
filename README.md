@@ -119,6 +119,7 @@ result = convert("document.pdf", config=config)
 |---|---|---|---|
 | `generate_images` | `True` | bool | Extract images from the document. |
 | `images_scale` | `2.0` | float | Scale factor for extracted images. Higher = better quality, larger files. |
+| `image_path_prefix` | `""` | str | Prefix prepended to image paths in the Markdown output, e.g. `"/assets"` or `"https://cdn.example.com"`. Empty means no prefix (Docling's default relative paths). |
 
 ### Picture descriptions (AI-powered)
 

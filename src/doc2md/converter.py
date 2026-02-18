@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -191,6 +192,16 @@ class DocumentPipeline:
             self._converter = self._build_converter()
         return self._converter
 
+    @staticmethod
+    def _rewrite_image_paths(md_text: str, prefix: str) -> str:
+        """Prepend *prefix* to every Markdown image path."""
+        prefix = prefix.rstrip("/")
+        return re.sub(
+            r"(!\[[^\]]*\]\()([^)]+)(\))",
+            lambda m: f"{m.group(1)}{prefix}/{m.group(2)}{m.group(3)}",
+            md_text,
+        )
+
     def _export_markdown_with_descriptions(self, doc, md_path: Path) -> None:
         """Export markdown using a custom serializer that places descriptions after images."""
         artifacts_dir, ref_path = doc._get_output_paths(md_path)  # pylint: disable=protected-access
@@ -207,6 +218,8 @@ class DocumentPipeline:
             ),
         )
         md_text = serializer.serialize().text
+        if self.config.image_path_prefix:
+            md_text = self._rewrite_image_paths(md_text, self.config.image_path_prefix)
         md_path.write_text(md_text, encoding="utf-8")
 
     def convert(self, source: str | Path, output_dir: str | Path | None = None) -> ConversionResult:
@@ -306,6 +319,12 @@ class DocumentPipeline:
                         md_path,
                         image_mode=ImageRefMode.REFERENCED,
                     )
+                    if cfg.image_path_prefix:
+                        md_text = md_path.read_text(encoding="utf-8")
+                        md_text = self._rewrite_image_paths(
+                            md_text, cfg.image_path_prefix,
+                        )
+                        md_path.write_text(md_text, encoding="utf-8")
             else:
                 md_text = conv_res.document.export_to_markdown()
                 md_path.write_text(md_text, encoding="utf-8")
