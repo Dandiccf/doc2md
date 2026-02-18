@@ -21,8 +21,8 @@ class PipelineConfig:
     """
 
     # -- OCR ----------------------------------------------------------------
-    ocr_engine: str = "ocrmac"  # "ocrmac", "easyocr", "rapidocr", "tesseract", "auto"
-    ocr_lang: list[str] = field(default_factory=lambda: ["en-US"])
+    ocr_engine: str = "auto"  # "auto", "easyocr", "rapidocr", "tesseract", "ocrmac" (macOS only)
+    ocr_lang: list[str] = field(default_factory=lambda: ["en"])
     force_full_page_ocr: bool = False
     bitmap_area_threshold: float = 0.05
 

@@ -54,19 +54,19 @@ class TestBasicConversion:
         assert result.markdown_path.exists()
         assert result.markdown_path.read_text(encoding="utf-8").strip()
 
-    def test_pipeline_reuse(self, sample_pdf: Path, sample_image: Path, tmp_path: Path, basic_config: PipelineConfig) -> None:
+    def test_pipeline_reuse(self, sample_pdf: Path, sample_image: Path, output_dir: Path, basic_config: PipelineConfig) -> None:
         """Create one pipeline and convert multiple documents with it."""
         pipeline = DocumentPipeline(config=basic_config)
 
-        r1 = pipeline.convert(sample_pdf, output_dir=tmp_path / "pdf_out")
-        r2 = pipeline.convert(sample_image, output_dir=tmp_path / "img_out")
+        r1 = pipeline.convert(sample_pdf, output_dir=output_dir / "pdf_out")
+        r2 = pipeline.convert(sample_image, output_dir=output_dir / "img_out")
 
         assert r1.success, f"PDF conversion failed: {r1.error}"
         assert r2.success, f"Image conversion failed: {r2.error}"
 
-    def test_auto_output_dir(self, sample_pdf: Path, basic_config: PipelineConfig, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_auto_output_dir(self, sample_pdf: Path, basic_config: PipelineConfig, monkeypatch: pytest.MonkeyPatch, output_dir: Path) -> None:
         """When output_dir is None, an auto-generated directory is used."""
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.chdir(output_dir)
         result = convert(str(sample_pdf), config=basic_config)
 
         assert result.success, f"Conversion failed: {result.error}"
@@ -140,8 +140,8 @@ class TestConfig:
     def test_defaults_match_optimal(self) -> None:
         """PipelineConfig defaults should match the optimal profile values."""
         cfg = PipelineConfig(do_picture_description=False)
-        assert cfg.ocr_engine == "ocrmac"
-        assert cfg.ocr_lang == ["en-US"]
+        assert cfg.ocr_engine == "auto"
+        assert cfg.ocr_lang == ["en"]
         assert cfg.table_mode == "accurate"
         assert cfg.generate_images is True
         assert cfg.images_scale == 2.0
@@ -162,7 +162,7 @@ class TestConfig:
     def test_to_dict(self) -> None:
         cfg = PipelineConfig(do_picture_description=False)
         d = cfg.to_dict()
-        assert d["ocr_engine"] == "ocrmac"
+        assert d["ocr_engine"] == "auto"
         assert isinstance(d["allowed_formats"], list)
 
     def test_no_api_key_error_when_descriptions_disabled(self) -> None:

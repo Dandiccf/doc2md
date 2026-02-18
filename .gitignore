@@ -5,3 +5,4 @@ __pycache__/
 dist/
 *.egg-info/
 tests/samples/
+tests/test_output/

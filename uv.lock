@@ -451,7 +451,7 @@ name = "doc2md"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "docling", extra = ["ocrmac"] },
+    { name = "docling" },
     { name = "pillow" },
     { name = "python-dotenv" },
 ]
@@ -462,6 +462,9 @@ all = [
 ]
 easyocr = [
     { name = "docling", extra = ["easyocr"] },
+]
+ocrmac = [
+    { name = "docling", extra = ["ocrmac"] },
 ]
 rapidocr = [
     { name = "docling", extra = ["rapidocr"] },
@@ -478,9 +481,10 @@ vlm = [
 
 [package.metadata]
 requires-dist = [
+    { name = "docling", specifier = ">=2.74.0" },
     { name = "docling", extras = ["easyocr"], marker = "extra == 'easyocr'", specifier = ">=2.74.0" },
     { name = "docling", extras = ["easyocr", "rapidocr", "tesserocr", "vlm", "ocrmac"], marker = "extra == 'all'", specifier = ">=2.74.0" },
-    { name = "docling", extras = ["ocrmac"], specifier = ">=2.74.0" },
+    { name = "docling", extras = ["ocrmac"], marker = "extra == 'ocrmac'", specifier = ">=2.74.0" },
     { name = "docling", extras = ["rapidocr"], marker = "extra == 'rapidocr'", specifier = ">=2.74.0" },
     { name = "docling", extras = ["tesserocr"], marker = "extra == 'tesseract'", specifier = ">=2.74.0" },
     { name = "docling", extras = ["vlm"], marker = "extra == 'vlm'", specifier = ">=2.74.0" },
@@ -488,7 +492,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
 ]
-provides-extras = ["easyocr", "rapidocr", "tesseract", "vlm", "all", "test"]
+provides-extras = ["ocrmac", "easyocr", "rapidocr", "tesseract", "vlm", "all", "test"]
 
 [[package]]
 name = "docling"
