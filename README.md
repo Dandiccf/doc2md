@@ -1,6 +1,6 @@
 # doc2md
 
-Standalone document-to-markdown conversion pipeline powered by [Docling](https://github.com/docling-project/docling). Extracts text, tables, and images from PDFs, DOCX, PPTX, and more — with optional AI-powered image descriptions via OpenAI or a local vision model (Ollama, LM Studio).
+Standalone document-to-markdown conversion pipeline powered by [Docling](https://github.com/docling-project/docling). Extracts text, tables, and images from PDFs, DOCX, PPTX, and more — with optional AI-powered image descriptions via OpenAI or a local vision model (Ollama, LM Studio). Standalone images (JPG, PNG, WEBP, etc.) get full vision-LLM analysis automatically.
 
 ## Installation
 
@@ -161,6 +161,29 @@ config = PipelineConfig(
 )
 result = convert("report.pdf", config=config)
 ```
+
+### Standalone image handling
+
+When a standalone image file (JPG, PNG, WEBP, TIFF, BMP) is passed to doc2md, it receives special treatment. Docling's layout pipeline runs OCR but rarely detects the entire image as a describable picture, so plain conversion produces only sparse OCR text. doc2md detects standalone images and makes its own vision API call for the whole image, producing rich markdown:
+
+```markdown
+![A bar chart showing quarterly revenue across four regions.](images/chart.png)
+
+> The chart compares Q1-Q4 revenue for North America, Europe, APAC, and LATAM.
+> North America leads at $4.2M (+18% YoY)...
+
+---
+
+Revenue ($M): NA 4.2, EU 3.1, APAC 2.8, LATAM 1.5
+```
+
+- The image file is copied to `images/` (or served via `image_path_prefix`)
+- With `structured_description=True`: summary becomes alt text, detail becomes blockquote
+- Any meaningful OCR text (>10 chars) from Docling is preserved after a `---` separator
+- When `do_picture_description=False`: no API call, but the image is still referenced in the markdown with any OCR text
+- If the vision API fails, falls back gracefully to image reference + OCR text only
+
+This works with both OpenAI and local providers — no extra configuration needed beyond what you already set for picture descriptions.
 
 ### Enrichment
 

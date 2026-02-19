@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,10 +28,16 @@ from docling_core.transforms.serializer.markdown import MarkdownParams
 from docling_core.types.doc.base import ImageRefMode
 from docling_core.types.doc.document import PictureItem, TableItem
 from docling_core.types.doc.labels import PictureClassificationLabel
+from PIL import Image as PILImage
 from pydantic import AnyUrl
 
 from doc2md.config import PipelineConfig
-from doc2md.serializers import DescriptionEnrichedImageDocSerializer
+from doc2md.serializers import (
+    DescriptionEnrichedImageDocSerializer,
+    _parse_description,
+    _sanitize_alt_text,
+    strip_think_tags,
+)
 from doc2md.utils import (
     ConversionMetadata,
     ElementCounts,
@@ -61,6 +68,8 @@ _INPUT_FORMAT_MAP: dict[str, InputFormat] = {
     "md": InputFormat.MD,
     "asciidoc": InputFormat.ASCIIDOC,
 }
+
+_IMAGE_EXTENSIONS = frozenset({"jpg", "jpeg", "png", "tif", "tiff", "bmp", "webp"})
 
 
 @dataclass
@@ -223,6 +232,118 @@ class DocumentPipeline:
             md_text,
         )
 
+    @staticmethod
+    def _is_standalone_image(source: str) -> bool:
+        """Return True if the source path has an image file extension."""
+        return Path(source).suffix.lstrip(".").lower() in _IMAGE_EXTENSIONS
+
+    def _get_vision_api_config(self) -> tuple[AnyUrl, dict, dict, str]:
+        """Extract (api_url, headers, params, prompt) from config.
+
+        Mirrors the logic in ``_build_converter()`` for the picture description
+        API but returns the values for direct use with ``api_image_request``.
+        """
+        cfg = self.config
+
+        if cfg.picture_description_provider == "local":
+            api_url = AnyUrl(cfg.local_url)
+            headers: dict = {}
+            params: dict = {"model": cfg.local_model, **cfg.local_params}
+        else:
+            api_url = AnyUrl("https://api.openai.com/v1/chat/completions")
+            headers = {"Authorization": f"Bearer {cfg.openai_api_key}"}
+            params = {"model": cfg.openai_model}
+
+        prompt = cfg.picture_description_prompt
+        if cfg.structured_description:
+            prompt = (
+                "Analyze this image and respond with a JSON object containing "
+                "exactly two fields:\n"
+                '- "summary": A concise 1-2 sentence description of what the '
+                "image shows and its key message. Use only plain text — letters, "
+                "numbers, periods, commas, hyphens, and spaces. No brackets, "
+                "backslashes, or special markdown characters.\n"
+                '- "detail": A thorough explanation of the image content, key '
+                "findings, data, and takeaways. Focus on meaning rather than "
+                "visual styling."
+            )
+            params["response_format"] = {"type": "json_object"}
+
+        return api_url, headers, params, prompt
+
+    def _describe_standalone_image(self, image: PILImage.Image) -> str | None:
+        """Send a standalone image to the vision API for description.
+
+        Returns the description text, or None on failure.
+        """
+        from docling.utils.api_image_request import api_image_request
+
+        api_url, headers, params, prompt = self._get_vision_api_config()
+        try:
+            text, _tokens, _stop = api_image_request(
+                image=image,
+                prompt=prompt,
+                url=api_url,
+                timeout=self.config.picture_description_timeout,
+                headers=headers,
+                **params,
+            )
+            if text:
+                return strip_think_tags(text).strip()
+            logger.warning("Vision API returned empty response for standalone image")
+            return None
+        except Exception as exc:
+            logger.warning("Vision API call failed for standalone image: %s", exc)
+            return None
+
+    def _build_standalone_image_markdown(
+        self,
+        source_path: Path,
+        docling_md: str,
+        description: str | None,
+        output_dir: Path,
+    ) -> tuple[str, Path]:
+        """Build enhanced markdown for a standalone image.
+
+        Returns (markdown_text, images_dir).
+        """
+        images_dir = output_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy source image to images/
+        dest = images_dir / source_path.name
+        shutil.copy2(source_path, dest)
+
+        # Build image reference path
+        if self.config.image_path_prefix:
+            prefix = self.config.image_path_prefix.rstrip("/")
+            img_ref = f"{prefix}/{source_path.name}"
+        else:
+            img_ref = f"images/{source_path.name}"
+
+        parts: list[str] = []
+
+        if description:
+            summary, detail = _parse_description(description)
+            if summary:
+                alt = _sanitize_alt_text(summary)
+            else:
+                alt = "Image"
+            parts.append(f"![{alt}]({img_ref})")
+            if detail:
+                blockquote = "\n".join(f"> {line}" for line in detail.splitlines())
+                parts.append(blockquote)
+        else:
+            parts.append(f"![Image]({img_ref})")
+
+        # Append OCR text if meaningful
+        ocr_text = docling_md.strip()
+        if len(ocr_text) > 10:
+            parts.append("---")
+            parts.append(ocr_text)
+
+        return "\n\n".join(parts) + "\n", images_dir
+
     def _export_markdown_with_descriptions(self, doc, md_path: Path) -> Path:
         """Export markdown using a custom serializer that places descriptions after images.
 
@@ -364,6 +485,41 @@ class DocumentPipeline:
                 md_text = conv_res.document.export_to_markdown()
                 md_path.write_text(md_text, encoding="utf-8")
             result.markdown_path = md_path
+
+            # Standalone image enhancement
+            if (
+                not is_url
+                and self._is_standalone_image(source_str)
+                and cfg.do_picture_description
+            ):
+                source_path = Path(source_str)
+                docling_md = md_path.read_text(encoding="utf-8")
+                try:
+                    image = PILImage.open(source_path).convert("RGB")
+                    description = self._describe_standalone_image(image)
+                except Exception as img_exc:
+                    logger.warning(
+                        "Failed to open image for description: %s", img_exc,
+                    )
+                    description = None
+                md_text, images_dir = self._build_standalone_image_markdown(
+                    source_path, docling_md, description, output_dir,
+                )
+                md_path.write_text(md_text, encoding="utf-8")
+                result.images_dir = images_dir
+            elif (
+                not is_url
+                and self._is_standalone_image(source_str)
+                and not cfg.do_picture_description
+            ):
+                # No LLM call, but still copy image and add a reference
+                source_path = Path(source_str)
+                docling_md = md_path.read_text(encoding="utf-8")
+                md_text, images_dir = self._build_standalone_image_markdown(
+                    source_path, docling_md, None, output_dir,
+                )
+                md_path.write_text(md_text, encoding="utf-8")
+                result.images_dir = images_dir
 
             # Save JSON export
             json_path = output_dir / "output.json"
