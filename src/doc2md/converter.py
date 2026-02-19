@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import docling
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
+    ConvertPipelineOptions,
     EasyOcrOptions,
     OcrMacOptions,
     PdfPipelineOptions,
@@ -21,8 +22,11 @@ from docling.datamodel.pipeline_options import (
 )
 from docling.document_converter import (
     DocumentConverter,
+    HTMLFormatOption,
     ImageFormatOption,
     PdfFormatOption,
+    PowerpointFormatOption,
+    WordFormatOption,
 )
 from docling_core.transforms.serializer.markdown import MarkdownParams
 from docling_core.types.doc.base import ImageRefMode
@@ -194,6 +198,15 @@ class DocumentPipeline:
         if cfg.do_formula_enrichment:
             opts.do_formula_enrichment = True
 
+        # Pipeline options for non-PDF formats (DOCX, PPTX, HTML) that use SimplePipeline
+        simple_opts = ConvertPipelineOptions()
+        if cfg.do_picture_description:
+            simple_opts.enable_remote_services = True
+            simple_opts.do_picture_description = True
+            simple_opts.picture_description_options = opts.picture_description_options
+        if cfg.do_picture_classification:
+            simple_opts.do_picture_classification = True
+
         # Map allowed format strings to InputFormat enums
         allowed = [
             _INPUT_FORMAT_MAP[fmt]
@@ -204,6 +217,9 @@ class DocumentPipeline:
         format_options = {
             InputFormat.PDF: PdfFormatOption(pipeline_options=opts),
             InputFormat.IMAGE: ImageFormatOption(pipeline_options=opts),
+            InputFormat.DOCX: WordFormatOption(pipeline_options=simple_opts),
+            InputFormat.PPTX: PowerpointFormatOption(pipeline_options=simple_opts),
+            InputFormat.HTML: HTMLFormatOption(pipeline_options=simple_opts),
         }
 
         return DocumentConverter(

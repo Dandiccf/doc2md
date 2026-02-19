@@ -123,7 +123,7 @@ result = convert("document.pdf", config=config)
 
 ### Picture descriptions (AI-powered)
 
-Disabled with `do_picture_description=False` (no API key or server needed).
+Works for images in PDFs, DOCX, PPTX, and HTML documents, as well as standalone image files. Disabled with `do_picture_description=False` (no API key or server needed).
 
 | Parameter | Default | Choices / Type | Description |
 |---|---|---|---|
