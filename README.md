@@ -208,11 +208,11 @@ This works with both OpenAI and local providers — no extra configuration neede
 
 The OpenAI API key is needed for AI-powered picture descriptions (`do_picture_description=True`, the default) and standalone image analysis. All other features (OCR, table extraction, page breaks, etc.) run locally and need no API key.
 
-| Parameter | Default | Source | Description |
-|---|---|---|---|
-| `openai_api_key` | `""` | `OPENAI_API_KEY` env var / `.env` | Required when provider is `"openai"`. |
-| `openai_model` | `""` | `OPENAI_MODEL` env var / `.env` (fallback: `"gpt-4o"`) | Vision model for descriptions. |
-| `openai_base_url` | `"https://api.openai.com/v1/chat/completions"` | `OPENAI_BASE_URL` env var / `.env` | API endpoint. Override for Azure OpenAI or other OpenAI-compatible services. |
+| Parameter | Default | Description |
+|---|---|---|
+| `openai_api_key` | `""` | Required when provider is `"openai"`. Env: `OPENAI_API_KEY`. |
+| `openai_model` | `""` | Vision model for descriptions (fallback: `"gpt-4o"`). Env: `OPENAI_MODEL`. |
+| `openai_base_url` | `"https://api.openai.com/`<br>`v1/chat/completions"` | Full API endpoint URL (path included — Docling posts directly to it). Override for Azure OpenAI or compatible services. Env: `OPENAI_BASE_URL`. |
 
 All three parameters can be set via environment variables or a `.env` file in your project root. doc2md loads `.env` automatically at import time — no extra setup needed. Values passed directly to `PipelineConfig` take precedence over environment variables.
 
@@ -277,7 +277,7 @@ Any server that exposes an OpenAI-compatible `/v1/chat/completions` endpoint.
 
 | Parameter | Default | Type | Description |
 |---|---|---|---|
-| `local_url` | `"http://localhost:11434/v1/chat/completions"` | str | Server URL. Ollama default shown; LM Studio typically uses `http://localhost:1234/v1/chat/completions`. |
+| `local_url` | `"http://localhost:11434/`<br>`v1/chat/completions"` | str | Server URL. Ollama default shown; LM Studio typically uses `http://localhost:1234/v1/chat/completions`. |
 | `local_model` | `""` | str | **Required.** Model name, e.g. `"llava"`, `"granite3.2-vision"`, `"gemma3"`. |
 | `local_params` | `{}` | dict | Extra request params, e.g. `{"max_completion_tokens": 4096, "seed": 42}`. |
 
