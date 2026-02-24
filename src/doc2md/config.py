@@ -63,6 +63,7 @@ class PipelineConfig:
         "key findings, and takeaways rather than describing visual "
         "elements like colors or layout."
     )
+    picture_description_lang: str = ""  # ISO 639-1 code (e.g. "en", "de", "ja") or "auto" to match surrounding document text; empty = no language instruction
     picture_description_timeout: int = 60
     picture_description_concurrency: int = 2
     picture_description_scale: float = 2.0
@@ -150,6 +151,7 @@ class PipelineConfig:
             "do_picture_description": self.do_picture_description,
             "do_picture_classification": self.do_picture_classification,
             "picture_description_provider": self.picture_description_provider,
+            "picture_description_lang": self.picture_description_lang,
             "openai_base_url": self.openai_base_url,
             "local_url": self.local_url,
             "local_model": self.local_model,

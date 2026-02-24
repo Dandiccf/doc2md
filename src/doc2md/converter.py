@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import shutil
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,7 +17,6 @@ from docling.datamodel.pipeline_options import (
     EasyOcrOptions,
     OcrMacOptions,
     PdfPipelineOptions,
-    PictureDescriptionApiOptions,
     TableFormerMode,
     TableStructureOptions,
 )
@@ -30,8 +30,14 @@ from docling.document_converter import (
 )
 from docling_core.transforms.serializer.markdown import MarkdownParams
 from docling_core.types.doc.base import ImageRefMode
-from docling_core.types.doc.document import PictureItem, TableItem
-from docling_core.types.doc.labels import PictureClassificationLabel
+from docling_core.types.doc.document import (
+    DescriptionMetaField,
+    PictureMeta,
+    PictureItem,
+    TableItem,
+    TextItem,
+)
+from docling_core.types.doc.labels import DocItemLabel, PictureClassificationLabel
 from PIL import Image as PILImage
 from pydantic import AnyUrl
 
@@ -138,55 +144,12 @@ class DocumentPipeline:
             opts.generate_picture_images = True
             opts.images_scale = cfg.images_scale
 
-        # Picture description via API
+        # Picture description: images are generated here, but API calls are
+        # handled in _describe_document_images() after conversion so that
+        # surrounding text and document title can be included as context.
         if cfg.do_picture_description:
-            opts.enable_remote_services = True
-            opts.do_picture_description = True
             opts.generate_picture_images = True
             opts.images_scale = max(opts.images_scale, cfg.picture_description_scale)
-
-            deny_labels = [
-                _CLASSIFICATION_LABEL_MAP[label]
-                for label in cfg.classification_deny
-                if label in _CLASSIFICATION_LABEL_MAP
-            ]
-
-            if cfg.picture_description_provider == "local":
-                api_url = AnyUrl(cfg.local_url)
-                api_headers: dict = {}
-                api_params: dict = {"model": cfg.local_model, **cfg.local_params}
-            else:
-                api_url = AnyUrl(cfg.openai_base_url)
-                api_headers = {"Authorization": f"Bearer {cfg.openai_api_key}"}
-                api_params = {"model": cfg.openai_model}
-
-            prompt = cfg.picture_description_prompt
-            if cfg.structured_description:
-                prompt = (
-                    "Analyze this image and respond with a JSON object containing "
-                    "exactly two fields:\n"
-                    '- "summary": A concise 1-2 sentence description of what the '
-                    "image shows and its key message. Use only plain text — letters, "
-                    "numbers, periods, commas, hyphens, and spaces. No brackets, "
-                    "backslashes, or special markdown characters.\n"
-                    '- "detail": A thorough explanation of the image content, key '
-                    "findings, data, and takeaways. Focus on meaning rather than "
-                    "visual styling."
-                )
-                api_params["response_format"] = {"type": "json_object"}
-
-            opts.picture_description_options = PictureDescriptionApiOptions(
-                url=api_url,
-                headers=api_headers,
-                params=api_params,
-                prompt=prompt,
-                timeout=cfg.picture_description_timeout,
-                concurrency=cfg.picture_description_concurrency,
-                scale=cfg.picture_description_scale,
-                picture_area_threshold=cfg.picture_area_threshold,
-                classification_deny=deny_labels,
-                classification_min_confidence=cfg.classification_min_confidence,
-            )
 
         # Picture classification
         if cfg.do_picture_classification:
@@ -200,10 +163,6 @@ class DocumentPipeline:
 
         # Pipeline options for non-PDF formats (DOCX, PPTX, HTML) that use SimplePipeline
         simple_opts = ConvertPipelineOptions()
-        if cfg.do_picture_description:
-            simple_opts.enable_remote_services = True
-            simple_opts.do_picture_description = True
-            simple_opts.picture_description_options = opts.picture_description_options
         if cfg.do_picture_classification:
             simple_opts.do_picture_classification = True
 
@@ -253,12 +212,8 @@ class DocumentPipeline:
         """Return True if the source path has an image file extension."""
         return Path(source).suffix.lstrip(".").lower() in _IMAGE_EXTENSIONS
 
-    def _get_vision_api_config(self) -> tuple[AnyUrl, dict, dict, str]:
-        """Extract (api_url, headers, params, prompt) from config.
-
-        Mirrors the logic in ``_build_converter()`` for the picture description
-        API but returns the values for direct use with ``api_image_request``.
-        """
+    def _get_vision_api_config(self) -> tuple[AnyUrl, dict, dict]:
+        """Return ``(api_url, headers, params)`` for direct ``api_image_request`` calls."""
         cfg = self.config
 
         if cfg.picture_description_provider == "local":
@@ -266,13 +221,22 @@ class DocumentPipeline:
             headers: dict = {}
             params: dict = {"model": cfg.local_model, **cfg.local_params}
         else:
-            api_url = AnyUrl("https://api.openai.com/v1/chat/completions")
+            api_url = AnyUrl(cfg.openai_base_url)
             headers = {"Authorization": f"Bearer {cfg.openai_api_key}"}
             params = {"model": cfg.openai_model}
 
-        prompt = cfg.picture_description_prompt
         if cfg.structured_description:
-            prompt = (
+            params["response_format"] = {"type": "json_object"}
+
+        return api_url, headers, params
+
+    # -- Contextual prompt construction ------------------------------------
+
+    def _build_base_prompt(self) -> str:
+        """Return the base vision prompt (plain or structured)."""
+        cfg = self.config
+        if cfg.structured_description:
+            return (
                 "Analyze this image and respond with a JSON object containing "
                 "exactly two fields:\n"
                 '- "summary": A concise 1-2 sentence description of what the '
@@ -283,18 +247,161 @@ class DocumentPipeline:
                 "findings, data, and takeaways. Focus on meaning rather than "
                 "visual styling."
             )
-            params["response_format"] = {"type": "json_object"}
+        return cfg.picture_description_prompt
 
-        return api_url, headers, params, prompt
+    def _build_contextual_prompt(
+        self,
+        doc_title: str = "",
+        surrounding_text: str = "",
+    ) -> str:
+        """Build a vision prompt enriched with document context and language."""
+        prompt = self._build_base_prompt()
 
-    def _describe_standalone_image(self, image: PILImage.Image) -> str | None:
-        """Send a standalone image to the vision API for description.
+        context_parts: list[str] = []
+        if doc_title:
+            context_parts.append(f"Document title: {doc_title}")
+        if surrounding_text:
+            context_parts.append(f"Surrounding text:\n{surrounding_text}")
+        if context_parts:
+            prompt += "\n\nContext:\n" + "\n".join(context_parts)
+
+        # Language instruction
+        lang = self.config.picture_description_lang.strip().lower()
+        if lang == "auto":
+            prompt += (
+                "\n\nIMPORTANT: Respond in the same language as the "
+                "surrounding text. If no surrounding text is provided or "
+                "the language cannot be determined, use English."
+            )
+        elif lang:
+            prompt += (
+                f"\n\nIMPORTANT: Respond in the language specified by "
+                f"ISO 639-1 code '{lang}'."
+            )
+
+        return prompt
+
+    # -- Classification filter ----------------------------------------------
+
+    def _should_describe(self, item: PictureItem) -> bool:
+        """Return False if the item's classification is in the deny list."""
+        cfg = self.config
+        if not item.meta or not item.meta.classification:
+            return True
+        deny = set(cfg.classification_deny)
+        for pred in item.meta.classification.predictions:
+            if (
+                pred.class_name in deny
+                and pred.confidence is not None
+                and pred.confidence >= cfg.classification_min_confidence
+            ):
+                return False
+        return True
+
+    # -- Post-processing image descriptions ---------------------------------
+
+    @staticmethod
+    def _get_document_title(doc) -> str:
+        """Extract the document title from the first meaningful text element.
+
+        Priority: ``title`` label > first text or heading element (whichever
+        comes first in document order) > ``doc.name`` (filename).
+        """
+        for item, _ in doc.iterate_items():
+            if not isinstance(item, TextItem) or not item.text.strip():
+                continue
+            label = getattr(item, "label", None)
+            if label == DocItemLabel.TITLE:
+                return item.text.strip()
+            if label in (DocItemLabel.SECTION_HEADER, DocItemLabel.TEXT):
+                return item.text.strip()
+        return getattr(doc, "name", "") or ""
+
+    @staticmethod
+    def _get_surrounding_text(items: list, idx: int, window: int = 3) -> str:
+        """Collect text from elements adjacent to *idx*."""
+        parts: list[str] = []
+        for j in range(max(0, idx - window), idx):
+            el, _ = items[j]
+            if isinstance(el, TextItem) and el.text.strip():
+                parts.append(el.text.strip())
+        for j in range(idx + 1, min(len(items), idx + window + 1)):
+            el, _ = items[j]
+            if isinstance(el, TextItem) and el.text.strip():
+                parts.append(el.text.strip())
+        return "\n".join(parts)
+
+    def _describe_document_images(self, doc) -> None:
+        """Describe embedded images using the vision API with document context.
+
+        Iterates over all ``PictureItem`` elements, builds a per-image prompt
+        that includes the document title and surrounding text, and stores the
+        result in ``item.meta.description``.
+        """
+        from docling.utils.api_image_request import api_image_request
+
+        cfg = self.config
+        api_url, headers, params = self._get_vision_api_config()
+
+        doc_title = self._get_document_title(doc)
+        items_list = list(doc.iterate_items())
+
+        # Collect (item, image, prompt) tuples for all describable pictures
+        tasks: list[tuple[PictureItem, PILImage.Image, str]] = []
+        for idx, (element, _level) in enumerate(items_list):
+            if not isinstance(element, PictureItem):
+                continue
+            if not self._should_describe(element):
+                continue
+            img = element.get_image(doc)
+            if img is None:
+                continue
+
+            surrounding = self._get_surrounding_text(items_list, idx)
+            prompt = self._build_contextual_prompt(doc_title, surrounding)
+            tasks.append((element, img, prompt))
+
+        if not tasks:
+            return
+
+        def _describe(task: tuple[PictureItem, PILImage.Image, str]) -> None:
+            item, img, prompt = task
+            try:
+                text, _tok, _stop = api_image_request(
+                    image=img,
+                    prompt=prompt,
+                    url=api_url,
+                    timeout=cfg.picture_description_timeout,
+                    headers=headers,
+                    **params,
+                )
+                if text:
+                    text = strip_think_tags(text).strip()
+                    if item.meta is None:
+                        item.meta = PictureMeta()
+                    item.meta.description = DescriptionMetaField(text=text)
+            except Exception as exc:
+                logger.warning("Vision API call failed for image: %s", exc)
+
+        with ThreadPoolExecutor(max_workers=cfg.picture_description_concurrency) as pool:
+            list(pool.map(_describe, tasks))
+
+    # -- Standalone image description ---------------------------------------
+
+    def _describe_standalone_image(
+        self,
+        image: PILImage.Image,
+        doc_title: str = "",
+        surrounding_text: str = "",
+    ) -> str | None:
+        """Send a standalone image to the vision API with context.
 
         Returns the description text, or None on failure.
         """
         from docling.utils.api_image_request import api_image_request
 
-        api_url, headers, params, prompt = self._get_vision_api_config()
+        api_url, headers, params = self._get_vision_api_config()
+        prompt = self._build_contextual_prompt(doc_title, surrounding_text)
         try:
             text, _tokens, _stop = api_image_request(
                 image=image,
@@ -451,6 +558,11 @@ class DocumentPipeline:
             # Save markdown
             md_path = output_dir / "output.md"
             cfg = self.config
+
+            # Post-processing: describe images with document context
+            if cfg.do_picture_description and not self._is_standalone_image(source_str):
+                self._describe_document_images(conv_res.document)
+
             if cfg.generate_images or cfg.do_picture_description:
                 images_dir = output_dir / "images"
                 images_dir.mkdir(exist_ok=True)
@@ -514,9 +626,14 @@ class DocumentPipeline:
             ):
                 source_path = Path(source_str)
                 docling_md = md_path.read_text(encoding="utf-8")
+                ocr_text = docling_md.strip()
                 try:
                     image = PILImage.open(source_path).convert("RGB")
-                    description = self._describe_standalone_image(image)
+                    description = self._describe_standalone_image(
+                        image,
+                        doc_title=source_path.stem,
+                        surrounding_text=ocr_text if len(ocr_text) > 10 else "",
+                    )
                 except Exception as img_exc:
                     logger.warning(
                         "Failed to open image for description: %s", img_exc,

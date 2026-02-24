@@ -131,6 +131,8 @@ result = convert("document.pdf", config=config)
 
 Works for images in PDFs, DOCX, PPTX, and HTML documents, as well as standalone image files. Disabled with `do_picture_description=False` (no API key or server needed).
 
+Each image description is generated with **document context**: the document title and surrounding text are included in the vision prompt, giving the model information for more accurate interpretations of charts, figures, and diagrams. This context also enables reliable language detection when using `picture_description_lang="auto"`.
+
 | Parameter | Default | Choices / Type | Description |
 |---|---|---|---|
 | `do_picture_description` | `True` | bool | Generate AI descriptions for images. |
@@ -138,12 +140,64 @@ Works for images in PDFs, DOCX, PPTX, and HTML documents, as well as standalone 
 | `structured_description` | `False` | bool | Request JSON `{summary, detail}` from the vision model. `summary` becomes concise alt text in the image tag, `detail` becomes a blockquote. Falls back gracefully to plain text if the model doesn't return valid JSON. See [Structured descriptions](#structured-descriptions) below. |
 | `picture_description_provider` | `"openai"` | `"openai"`, `"local"` | `"openai"` uses the OpenAI API. `"local"` uses any OpenAI-compatible server (Ollama, LM Studio, etc.). |
 | `picture_description_prompt` | *"Explain what this image conveys..."* | str | Prompt sent to the vision model. Overridden automatically when `structured_description=True`. |
+| `picture_description_lang` | `""` | str | Language for image descriptions. ISO&nbsp;639&#8209;1 code (e.g.&nbsp;`"en"`, `"de"`, `"ja"`) to force a specific language, `"auto"` to match the surrounding document text (falls back to English), or empty (default) for no language instruction. |
 | `picture_description_timeout` | `60` | int (seconds) | Timeout per description request. |
 | `picture_description_concurrency` | `2` | int | Parallel description requests. |
 | `picture_description_scale` | `2.0` | float | Image scale sent to the vision model. |
 | `picture_area_threshold` | `0.01` | float | Minimum image area (fraction of page) to describe. |
 | `classification_deny` | `["logo", "icon", "signature", "stamp", "qr_code", "bar_code"]` | list of str | Skip descriptions for these image types. |
 | `classification_min_confidence` | `0.5` | float | Minimum confidence to apply classification filter. |
+
+#### Picture classification
+
+When `do_picture_classification=True` (default), Docling runs a local classification model on each detected image before the description step. The classifier assigns a label with a confidence score, and images whose label appears in `classification_deny` with confidence above `classification_min_confidence` are **skipped** — no vision API call is made for them. This saves API cost and avoids meaningless descriptions for logos, barcodes, and similar decorative elements.
+
+Classification runs entirely locally (no API key needed) and adds negligible overhead to the conversion.
+
+**Available classification labels:**
+
+| Label | Description |
+|---|---|
+| `bar_chart` | Bar chart |
+| `stacked_bar_chart` | Stacked bar chart |
+| `line_chart` | Line chart |
+| `pie_chart` | Pie chart |
+| `scatter_chart` | Scatter plot |
+| `flow_chart` | Flow chart / diagram |
+| `heatmap` | Heatmap |
+| `map` | Geographic map |
+| `stratigraphic_chart` | Stratigraphic chart |
+| `natural_image` | Photograph / natural image |
+| `remote_sensing` | Satellite / remote sensing image |
+| `screenshot` | Screenshot |
+| `cad_drawing` | CAD drawing |
+| `electrical_diagram` | Electrical / circuit diagram |
+| `chemistry_molecular_structure` | Molecular structure |
+| `chemistry_markush_structure` | Markush structure |
+| `icon` | Small icon |
+| `logo` | Logo |
+| `signature` | Signature |
+| `stamp` | Stamp / seal |
+| `qr_code` | QR code |
+| `bar_code` | Barcode |
+| `picture_group` | Group of images |
+| `other` | Unclassified |
+
+**Default deny list:** `["logo", "icon", "signature", "stamp", "qr_code", "bar_code"]` — these are typically decorative or non-informational and don't benefit from AI descriptions.
+
+```python
+# Describe everything, including logos and barcodes
+config = PipelineConfig(classification_deny=[])
+
+# Only skip QR/barcodes, allow logos and icons
+config = PipelineConfig(classification_deny=["qr_code", "bar_code"])
+
+# Require higher confidence before skipping (fewer images skipped)
+config = PipelineConfig(classification_min_confidence=0.8)
+
+# Disable classification entirely (all images get described)
+config = PipelineConfig(do_picture_classification=False)
+```
 
 #### Structured descriptions
 
@@ -168,9 +222,26 @@ config = PipelineConfig(
 result = convert("report.pdf", config=config)
 ```
 
+#### Description language
+
+By default, the vision model responds in whatever language it chooses (typically English). Use `picture_description_lang` to control this:
+
+```python
+# Force German descriptions
+config = PipelineConfig(picture_description_lang="de")
+
+# Auto-detect from surrounding document text (falls back to English)
+config = PipelineConfig(picture_description_lang="auto")
+
+# Combine with structured descriptions
+config = PipelineConfig(structured_description=True, picture_description_lang="ja")
+```
+
+The `"auto"` mode works because each vision prompt includes surrounding text from the document, so the model can match that language. Any [ISO 639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) code is accepted.
+
 ### Standalone image handling
 
-When a standalone image file (JPG, PNG, WEBP, TIFF, BMP) is passed to doc2md, it receives special treatment. Docling's layout pipeline runs OCR but rarely detects the entire image as a describable picture, so plain conversion produces only sparse OCR text. doc2md detects standalone images and makes its own vision API call for the whole image, producing rich markdown:
+When a standalone image file (JPG, PNG, WEBP, TIFF, BMP) is passed to doc2md, it receives special treatment. Docling's layout pipeline runs OCR but rarely detects the entire image as a describable picture, so plain conversion produces only sparse OCR text. doc2md detects standalone images and makes its own vision API call for the whole image — including the filename and any OCR text as context — producing rich markdown:
 
 ```markdown
 ![A bar chart showing quarterly revenue across four regions.](images/chart.png)
