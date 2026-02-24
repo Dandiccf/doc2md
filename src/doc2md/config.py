@@ -112,6 +112,7 @@ class PipelineConfig:
     # -- OpenAI credentials (populated from env in __post_init__) -----------
     openai_api_key: str = ""
     openai_model: str = ""
+    openai_base_url: str = "https://api.openai.com/v1/chat/completions"  # Azure: "https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=<version>"
 
     def __post_init__(self) -> None:
         if not self.do_picture_description:
@@ -125,6 +126,9 @@ class PipelineConfig:
                     )
             if not self.openai_model:
                 self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+            env_base_url = os.getenv("OPENAI_BASE_URL", "")
+            if env_base_url and self.openai_base_url == "https://api.openai.com/v1/chat/completions":
+                self.openai_base_url = env_base_url
         elif self.picture_description_provider == "local":
             if not self.local_model:
                 raise RuntimeError(
@@ -146,6 +150,7 @@ class PipelineConfig:
             "do_picture_description": self.do_picture_description,
             "do_picture_classification": self.do_picture_classification,
             "picture_description_provider": self.picture_description_provider,
+            "openai_base_url": self.openai_base_url,
             "local_url": self.local_url,
             "local_model": self.local_model,
             "image_path_prefix": self.image_path_prefix,

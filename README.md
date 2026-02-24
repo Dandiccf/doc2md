@@ -206,18 +206,69 @@ This works with both OpenAI and local providers — no extra configuration neede
 
 ### OpenAI provider (`"openai"`, default)
 
+The OpenAI API key is needed for AI-powered picture descriptions (`do_picture_description=True`, the default) and standalone image analysis. All other features (OCR, table extraction, page breaks, etc.) run locally and need no API key.
+
 | Parameter | Default | Source | Description |
 |---|---|---|---|
 | `openai_api_key` | `""` | `OPENAI_API_KEY` env var / `.env` | Required when provider is `"openai"`. |
 | `openai_model` | `""` | `OPENAI_MODEL` env var / `.env` (fallback: `"gpt-4o"`) | Vision model for descriptions. |
+| `openai_base_url` | `"https://api.openai.com/v1/chat/completions"` | `OPENAI_BASE_URL` env var / `.env` | API endpoint. Override for Azure OpenAI or other OpenAI-compatible services. |
+
+All three parameters can be set via environment variables or a `.env` file in your project root. doc2md loads `.env` automatically at import time — no extra setup needed. Values passed directly to `PipelineConfig` take precedence over environment variables.
+
+**`.env` file (recommended):**
 
 ```bash
 cp .env.example .env
-# Edit .env with your key
 ```
 
+```dotenv
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o
+# OPENAI_BASE_URL=https://...  # only needed for Azure or compatible services
+```
+
+Then just use the defaults:
+
 ```python
+from doc2md import convert
+
+result = convert("report.pdf")  # picks up credentials from .env
+```
+
+**Pass credentials in code:**
+
+```python
+from doc2md import convert, PipelineConfig
+
 config = PipelineConfig(openai_api_key="sk-...", openai_model="gpt-4o")
+result = convert("report.pdf", config=config)
+```
+
+**Azure OpenAI example:**
+
+```python
+config = PipelineConfig(
+    openai_api_key="your-azure-api-key",
+    openai_model="gpt-4o",
+    openai_base_url="https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2024-10-21",
+)
+result = convert("report.pdf", config=config)
+```
+
+Or via `.env`:
+
+```dotenv
+OPENAI_API_KEY=your-azure-api-key
+OPENAI_MODEL=gpt-4o
+OPENAI_BASE_URL=https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2024-10-21
+```
+
+**No API key needed?** Disable picture descriptions:
+
+```python
+config = PipelineConfig(do_picture_description=False)
+result = convert("report.pdf", config=config)
 ```
 
 ### Local provider (`"local"` — Ollama, LM Studio, etc.)

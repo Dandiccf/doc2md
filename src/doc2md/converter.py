@@ -156,7 +156,7 @@ class DocumentPipeline:
                 api_headers: dict = {}
                 api_params: dict = {"model": cfg.local_model, **cfg.local_params}
             else:
-                api_url = AnyUrl("https://api.openai.com/v1/chat/completions")
+                api_url = AnyUrl(cfg.openai_base_url)
                 api_headers = {"Authorization": f"Bearer {cfg.openai_api_key}"}
                 api_params = {"model": cfg.openai_model}
 
