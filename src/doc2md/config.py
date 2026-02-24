@@ -50,6 +50,7 @@ class PipelineConfig:
     generate_images: bool = True
     images_scale: float = 2.0
     image_path_prefix: str = ""  # prefix prepended to image paths in markdown, e.g. "/assets" or "https://cdn.example.com"
+    page_break_placeholder: str = ""  # e.g. "<!-- page-break -->" to mark page boundaries in output
     # generate_page_images: bool = False
 
     # -- Picture description ------------------------------------------------
@@ -148,6 +149,7 @@ class PipelineConfig:
             "local_url": self.local_url,
             "local_model": self.local_model,
             "image_path_prefix": self.image_path_prefix,
+            "page_break_placeholder": self.page_break_placeholder,
             "do_code_enrichment": self.do_code_enrichment,
             "do_formula_enrichment": self.do_formula_enrichment,
             "allowed_formats": self.allowed_formats,

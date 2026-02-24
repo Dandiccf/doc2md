@@ -376,6 +376,7 @@ class DocumentPipeline:
             doc=ref_doc,
             params=MarkdownParams(
                 image_mode=ImageRefMode.REFERENCED,
+                page_break_placeholder=self.config.page_break_placeholder or None,
             ),
         )
         md_text = serializer.serialize().text
@@ -485,6 +486,7 @@ class DocumentPipeline:
                     conv_res.document.save_as_markdown(
                         md_path,
                         image_mode=ImageRefMode.REFERENCED,
+                        page_break_placeholder=cfg.page_break_placeholder or None,
                     )
                     if cfg.image_path_prefix:
                         md_text = md_path.read_text(encoding="utf-8")
@@ -498,7 +500,9 @@ class DocumentPipeline:
                         if artifacts_dir.exists():
                             result.images_dir = artifacts_dir
             else:
-                md_text = conv_res.document.export_to_markdown()
+                md_text = conv_res.document.export_to_markdown(
+                    page_break_placeholder=cfg.page_break_placeholder or None,
+                )
                 md_path.write_text(md_text, encoding="utf-8")
             result.markdown_path = md_path
 

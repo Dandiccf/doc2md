@@ -121,6 +121,12 @@ result = convert("document.pdf", config=config)
 | `images_scale` | `2.0` | float | Scale factor for extracted images. Higher = better quality, larger files. |
 | `image_path_prefix` | `""` | str | URL prefix for image paths in the Markdown output. When set, each image reference becomes `prefix/filename.png` (directory paths are stripped, only the filename is kept). E.g. `"/assets"` produces `![img](/assets/image_000.png)`. Empty means no rewriting (Docling's default paths). |
 
+### Page breaks
+
+| Parameter | Default | Choices / Type | Description |
+|---|---|---|---|
+| `page_break_placeholder` | `""` | str | String inserted at each page boundary in the Markdown output. E.g. `"<!-- page-break -->"`. Empty means no page break markers. Works with PDF (pages) and PPTX (slides). Flow-based formats like DOCX and HTML have no fixed pages, so the placeholder won't appear. |
+
 ### Picture descriptions (AI-powered)
 
 Works for images in PDFs, DOCX, PPTX, and HTML documents, as well as standalone image files. Disabled with `do_picture_description=False` (no API key or server needed).
