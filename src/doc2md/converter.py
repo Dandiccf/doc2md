@@ -56,6 +56,8 @@ from doc2md.utils import (
     timed,
 )
 
+_PDF_EXTENSIONS = frozenset({"pdf"})
+
 # Mapping from string names to PictureClassificationLabel enums
 _CLASSIFICATION_LABEL_MAP: dict[str, PictureClassificationLabel] = {
     "logo": PictureClassificationLabel.LOGO,
@@ -606,6 +608,293 @@ class DocumentPipeline:
 
         return "\n".join(parts)
 
+    # -- Engine resolution ----------------------------------------------------
+
+    def _resolve_engine(self, source_str: str, is_url: bool) -> str:
+        """Decide which conversion engine to use.
+
+        Returns ``"pymupdf4llm"`` or ``"docling"``.
+        """
+        engine = self.config.engine.lower().strip()
+
+        if engine == "pymupdf4llm":
+            try:
+                import pymupdf4llm as _  # noqa: F401
+            except ImportError:
+                raise ImportError(
+                    "pymupdf4llm is not installed. "
+                    "Install it with: pip install doc2md[pymupdf]"
+                ) from None
+            return "pymupdf4llm"
+
+        if engine == "docling":
+            return "docling"
+
+        # Auto mode
+        if is_url:
+            return "docling"
+
+        ext = Path(source_str).suffix.lstrip(".").lower()
+        if ext not in _PDF_EXTENSIONS:
+            return "docling"
+
+        try:
+            import pymupdf4llm as _  # noqa: F401
+        except ImportError:
+            return "docling"
+
+        from doc2md.analyzer import analyze_pdf
+
+        analysis = analyze_pdf(source_str)
+        if analysis.is_scanned:
+            return "docling"
+        if analysis.has_images:
+            return "docling"
+        if analysis.has_tables:
+            return "docling"
+
+        return "pymupdf4llm"
+
+    # -- PyMuPDF4LLM conversion path ----------------------------------------
+
+    def _convert_pymupdf(
+        self,
+        source_str: str,
+        output_dir: Path,
+        source_name: str,
+        result: ConversionResult,
+    ) -> None:
+        """Convert a text-only PDF using pymupdf4llm.
+
+        This is a fast path for simple PDFs without images or complex tables.
+        Images and tables are handled by the Docling engine instead.
+        """
+        import pymupdf4llm
+
+        cfg = self.config
+        md_path = output_dir / "output.md"
+
+        with timed() as timing:
+            chunks = pymupdf4llm.to_markdown(
+                source_str,
+                page_chunks=True,
+                write_images=False,
+                ignore_images=True,
+            )
+
+        result.metadata.timing = TimingInfo(
+            start=timing.start,
+            end=timing.end,
+            elapsed_seconds=timing.elapsed_seconds,
+        )
+
+        # Join page chunks with optional page-break placeholder
+        separator = "\n\n"
+        if cfg.page_break_placeholder:
+            separator = f"\n\n{cfg.page_break_placeholder}\n\n"
+        md_text = separator.join(chunk["text"] for chunk in chunks)
+
+        # Count elements from chunks
+        counts = ElementCounts()
+        counts.pages = len(chunks)
+        result.metadata.elements = counts
+
+        md_path.write_text(md_text, encoding="utf-8")
+        result.markdown_path = md_path
+        result.json_path = None
+        result.success = True
+
+        logger.info(
+            "Converted %s (pymupdf4llm) in %.1fs (%d pages)",
+            source_name,
+            timing.elapsed_seconds,
+            counts.pages,
+        )
+
+    # -- Docling conversion path --------------------------------------------
+
+    def _convert_docling(
+        self,
+        source_str: str,
+        output_dir: Path,
+        source_name: str,
+        is_url: bool,
+        result: ConversionResult,
+    ) -> None:
+        """Convert a document using the Docling pipeline."""
+        converter = self._get_converter()
+
+        with timed() as timing:
+            conv_res = converter.convert(
+                source_str,
+                raises_on_error=True,
+            )
+
+        result.metadata.timing = TimingInfo(
+            start=timing.start,
+            end=timing.end,
+            elapsed_seconds=timing.elapsed_seconds,
+        )
+
+        # Count elements
+        counts = ElementCounts()
+        counts.pages = len(conv_res.document.pages)
+        for element, _level in conv_res.document.iterate_items():
+            if isinstance(element, PictureItem):
+                counts.pictures += 1
+            elif isinstance(element, TableItem):
+                counts.tables += 1
+            else:
+                counts.text_items += 1
+        result.metadata.elements = counts
+
+        # Save markdown
+        md_path = output_dir / "output.md"
+        cfg = self.config
+
+        # Post-processing: describe images with document context
+        if cfg.do_picture_description and not self._is_standalone_image(source_str):
+            self._describe_document_images(conv_res.document)
+
+        # Detect cross-page ordering issues in Docling's document tree.
+        _page_misordered = self._has_page_order_violation(conv_res.document)
+        if _page_misordered:
+            logger.warning(
+                "Detected page-order issue in %s; using page-ordered fallback",
+                source_name,
+            )
+
+        if _page_misordered:
+            md_text = self._export_markdown_page_ordered(
+                conv_res.document,
+                page_break_placeholder=cfg.page_break_placeholder,
+                image_path_prefix=cfg.image_path_prefix,
+            )
+            md_path.write_text(md_text, encoding="utf-8")
+            if cfg.generate_images or cfg.do_picture_description:
+                images_dir = output_dir / "images"
+                images_dir.mkdir(exist_ok=True)
+                result.images_dir = images_dir
+                pic_idx = 0
+                for element, _level in conv_res.document.iterate_items():
+                    if isinstance(element, PictureItem):
+                        try:
+                            img = element.get_image(conv_res.document)
+                            if img is not None:
+                                img.save(
+                                    images_dir / f"picture_{pic_idx:03d}.png",
+                                    format="PNG",
+                                )
+                                pic_idx += 1
+                        except Exception as img_err:
+                            logger.warning(
+                                "Failed to save image %d: %s", pic_idx, img_err,
+                            )
+        elif cfg.generate_images or cfg.do_picture_description:
+            images_dir = output_dir / "images"
+            images_dir.mkdir(exist_ok=True)
+            result.images_dir = images_dir
+
+            pic_idx = 0
+            for element, _level in conv_res.document.iterate_items():
+                if isinstance(element, PictureItem):
+                    try:
+                        img = element.get_image(conv_res.document)
+                        if img is not None:
+                            img.save(
+                                images_dir / f"picture_{pic_idx:03d}.png",
+                                format="PNG",
+                            )
+                            pic_idx += 1
+                    except Exception as img_err:
+                        logger.warning(
+                            "Failed to save image %d: %s", pic_idx, img_err,
+                        )
+
+            if cfg.do_picture_description:
+                artifacts_dir = self._export_markdown_with_descriptions(
+                    conv_res.document, md_path,
+                )
+                if cfg.image_path_prefix:
+                    result.images_dir = artifacts_dir
+            else:
+                conv_res.document.save_as_markdown(
+                    md_path,
+                    image_mode=ImageRefMode.REFERENCED,
+                    page_break_placeholder=cfg.page_break_placeholder or None,
+                )
+                if cfg.image_path_prefix:
+                    md_text = md_path.read_text(encoding="utf-8")
+                    md_text = self._rewrite_image_paths(
+                        md_text, cfg.image_path_prefix,
+                    )
+                    md_path.write_text(md_text, encoding="utf-8")
+                    artifacts_dir = output_dir / f"{md_path.stem}_artifacts"
+                    if artifacts_dir.exists():
+                        result.images_dir = artifacts_dir
+        else:
+            md_text = conv_res.document.export_to_markdown(
+                page_break_placeholder=cfg.page_break_placeholder or None,
+            )
+            md_path.write_text(md_text, encoding="utf-8")
+        result.markdown_path = md_path
+
+        # Standalone image enhancement
+        if (
+            not is_url
+            and self._is_standalone_image(source_str)
+            and cfg.do_picture_description
+        ):
+            source_path = Path(source_str)
+            docling_md = md_path.read_text(encoding="utf-8")
+            ocr_text = docling_md.strip()
+            try:
+                image = PILImage.open(source_path).convert("RGB")
+                description = self._describe_standalone_image(
+                    image,
+                    doc_title=source_path.stem,
+                    surrounding_text=ocr_text if len(ocr_text) > 10 else "",
+                )
+            except Exception as img_exc:
+                logger.warning(
+                    "Failed to open image for description: %s", img_exc,
+                )
+                description = None
+            md_text, images_dir = self._build_standalone_image_markdown(
+                source_path, docling_md, description, output_dir,
+            )
+            md_path.write_text(md_text, encoding="utf-8")
+            result.images_dir = images_dir
+        elif (
+            not is_url
+            and self._is_standalone_image(source_str)
+            and not cfg.do_picture_description
+        ):
+            source_path = Path(source_str)
+            docling_md = md_path.read_text(encoding="utf-8")
+            md_text, images_dir = self._build_standalone_image_markdown(
+                source_path, docling_md, None, output_dir,
+            )
+            md_path.write_text(md_text, encoding="utf-8")
+            result.images_dir = images_dir
+
+        # Save JSON export
+        json_path = output_dir / "output.json"
+        conv_res.document.save_as_json(json_path)
+        result.json_path = json_path
+
+        result.success = True
+        logger.info(
+            "Converted %s (docling) in %.1fs (%d pages, %d tables, %d pictures)",
+            source_name,
+            timing.elapsed_seconds,
+            counts.pages,
+            counts.tables,
+            counts.pictures,
+        )
+
+    # -- Main entry point ---------------------------------------------------
+
     def convert(self, source: str | Path, output_dir: str | Path | None = None) -> ConversionResult:
         """Convert a single document and save all outputs.
 
@@ -643,191 +932,14 @@ class DocumentPipeline:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            converter = self._get_converter()
+            engine = self._resolve_engine(source_str, is_url)
+            result.metadata.engine_used = engine
+            logger.info("Using engine: %s for %s", engine, source_name)
 
-            with timed() as timing:
-                conv_res = converter.convert(
-                    source_str,
-                    raises_on_error=True,
-                )
-
-            result.metadata.timing = TimingInfo(
-                start=timing.start,
-                end=timing.end,
-                elapsed_seconds=timing.elapsed_seconds,
-            )
-
-            # Count elements
-            counts = ElementCounts()
-            counts.pages = len(conv_res.document.pages)
-            for element, _level in conv_res.document.iterate_items():
-                if isinstance(element, PictureItem):
-                    counts.pictures += 1
-                elif isinstance(element, TableItem):
-                    counts.tables += 1
-                else:
-                    counts.text_items += 1
-            result.metadata.elements = counts
-
-            # Save markdown
-            md_path = output_dir / "output.md"
-            cfg = self.config
-
-            # Post-processing: describe images with document context
-            if cfg.do_picture_description and not self._is_standalone_image(source_str):
-                self._describe_document_images(conv_res.document)
-
-            # Detect cross-page ordering issues in Docling's document tree.
-            # Some PDFs cause Docling to group items from different pages
-            # into the same list node, producing wrong element order.
-            _page_misordered = self._has_page_order_violation(
-                conv_res.document,
-            )
-            if _page_misordered:
-                logger.warning(
-                    "Detected page-order issue in %s; "
-                    "using page-ordered fallback",
-                    source_name,
-                )
-
-            if _page_misordered:
-                # Fallback: export markdown in strict page order.
-                md_text = self._export_markdown_page_ordered(
-                    conv_res.document,
-                    page_break_placeholder=cfg.page_break_placeholder,
-                    image_path_prefix=cfg.image_path_prefix,
-                )
-                md_path.write_text(md_text, encoding="utf-8")
-                if cfg.generate_images or cfg.do_picture_description:
-                    images_dir = output_dir / "images"
-                    images_dir.mkdir(exist_ok=True)
-                    result.images_dir = images_dir
-                    pic_idx = 0
-                    for element, _level in conv_res.document.iterate_items():
-                        if isinstance(element, PictureItem):
-                            try:
-                                img = element.get_image(conv_res.document)
-                                if img is not None:
-                                    img.save(
-                                        images_dir / f"picture_{pic_idx:03d}.png",
-                                        format="PNG",
-                                    )
-                                    pic_idx += 1
-                            except Exception as img_err:
-                                logger.warning(
-                                    "Failed to save image %d: %s",
-                                    pic_idx,
-                                    img_err,
-                                )
-            elif cfg.generate_images or cfg.do_picture_description:
-                images_dir = output_dir / "images"
-                images_dir.mkdir(exist_ok=True)
-                result.images_dir = images_dir
-
-                # Save individual picture images
-                pic_idx = 0
-                for element, _level in conv_res.document.iterate_items():
-                    if isinstance(element, PictureItem):
-                        try:
-                            img = element.get_image(conv_res.document)
-                            if img is not None:
-                                img.save(
-                                    images_dir / f"picture_{pic_idx:03d}.png",
-                                    format="PNG",
-                                )
-                                pic_idx += 1
-                        except Exception as img_err:
-                            logger.warning(
-                                "Failed to save image %d: %s", pic_idx, img_err,
-                            )
-
-                if cfg.do_picture_description:
-                    artifacts_dir = self._export_markdown_with_descriptions(
-                        conv_res.document, md_path,
-                    )
-                    # When image_path_prefix is set, callers will serve images
-                    # by filename from a remote store — point images_dir to the
-                    # artifacts directory whose filenames match the markdown refs.
-                    if cfg.image_path_prefix:
-                        result.images_dir = artifacts_dir
-                else:
-                    conv_res.document.save_as_markdown(
-                        md_path,
-                        image_mode=ImageRefMode.REFERENCED,
-                        page_break_placeholder=cfg.page_break_placeholder or None,
-                    )
-                    if cfg.image_path_prefix:
-                        md_text = md_path.read_text(encoding="utf-8")
-                        md_text = self._rewrite_image_paths(
-                            md_text, cfg.image_path_prefix,
-                        )
-                        md_path.write_text(md_text, encoding="utf-8")
-                        # Point images_dir to the artifacts directory whose
-                        # filenames match the rewritten markdown references.
-                        artifacts_dir = output_dir / f"{md_path.stem}_artifacts"
-                        if artifacts_dir.exists():
-                            result.images_dir = artifacts_dir
+            if engine == "pymupdf4llm":
+                self._convert_pymupdf(source_str, output_dir, source_name, result)
             else:
-                md_text = conv_res.document.export_to_markdown(
-                    page_break_placeholder=cfg.page_break_placeholder or None,
-                )
-                md_path.write_text(md_text, encoding="utf-8")
-            result.markdown_path = md_path
-
-            # Standalone image enhancement
-            if (
-                not is_url
-                and self._is_standalone_image(source_str)
-                and cfg.do_picture_description
-            ):
-                source_path = Path(source_str)
-                docling_md = md_path.read_text(encoding="utf-8")
-                ocr_text = docling_md.strip()
-                try:
-                    image = PILImage.open(source_path).convert("RGB")
-                    description = self._describe_standalone_image(
-                        image,
-                        doc_title=source_path.stem,
-                        surrounding_text=ocr_text if len(ocr_text) > 10 else "",
-                    )
-                except Exception as img_exc:
-                    logger.warning(
-                        "Failed to open image for description: %s", img_exc,
-                    )
-                    description = None
-                md_text, images_dir = self._build_standalone_image_markdown(
-                    source_path, docling_md, description, output_dir,
-                )
-                md_path.write_text(md_text, encoding="utf-8")
-                result.images_dir = images_dir
-            elif (
-                not is_url
-                and self._is_standalone_image(source_str)
-                and not cfg.do_picture_description
-            ):
-                # No LLM call, but still copy image and add a reference
-                source_path = Path(source_str)
-                docling_md = md_path.read_text(encoding="utf-8")
-                md_text, images_dir = self._build_standalone_image_markdown(
-                    source_path, docling_md, None, output_dir,
-                )
-                md_path.write_text(md_text, encoding="utf-8")
-                result.images_dir = images_dir
-
-            # Save JSON export
-            json_path = output_dir / "output.json"
-            conv_res.document.save_as_json(json_path)
-            result.json_path = json_path
-
-            result.success = True
-            logger.info(
-                "Converted %s in %.1fs (%d pages, %d tables, %d pictures)",
-                source_name,
-                timing.elapsed_seconds,
-                counts.pages,
-                counts.tables,
-                counts.pictures,
-            )
+                self._convert_docling(source_str, output_dir, source_name, is_url, result)
 
         except Exception as exc:
             result.error = f"{type(exc).__name__}: {exc}"

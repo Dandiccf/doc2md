@@ -60,6 +60,7 @@ class ConversionMetadata:
     """Full metadata for a single conversion run."""
 
     document: str = ""
+    engine_used: str = ""
     timing: TimingInfo = field(default_factory=TimingInfo)
     elements: ElementCounts = field(default_factory=ElementCounts)
     error: str | None = None
@@ -75,6 +76,7 @@ class ConversionMetadata:
         data = json.loads(path.read_text())
         meta = cls()
         meta.document = data.get("document", "")
+        meta.engine_used = data.get("engine_used", "")
         meta.timing = TimingInfo(**data.get("timing", {}))
         meta.elements = ElementCounts(**data.get("elements", {}))
         meta.error = data.get("error")

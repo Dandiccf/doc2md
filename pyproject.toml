@@ -1,6 +1,6 @@
 [project]
 name = "doc2md"
-version = "0.5.0"
+version = "0.6.0"
 description = "Standalone document-to-markdown conversion pipeline powered by Docling"
 requires-python = ">=3.11"
 dependencies = [
@@ -15,8 +15,10 @@ easyocr = ["docling[easyocr]>=2.74.0"]
 rapidocr = ["docling[rapidocr]>=2.74.0"]
 tesseract = ["docling[tesserocr]>=2.74.0"]
 vlm = ["docling[vlm]>=2.74.0"]
+pymupdf = ["pymupdf4llm>=0.0.17"]
 all = [
     "docling[easyocr,rapidocr,tesserocr,vlm,ocrmac]>=2.74.0",
+    "pymupdf4llm>=0.0.17",
 ]
 test = ["pytest>=8.0"]
 

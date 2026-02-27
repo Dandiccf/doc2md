@@ -20,6 +20,7 @@ class TestBasicConversion:
     @pytest.fixture(scope="class")
     def basic_config(self) -> PipelineConfig:
         return PipelineConfig(
+            engine="docling",
             do_picture_description=False,
             do_picture_classification=False,
             generate_images=True,
@@ -85,6 +86,7 @@ class TestURLConversion:
     def test_convert_url(self, output_dir: Path) -> None:
         """Convert a document directly from a URL."""
         config = PipelineConfig(
+            engine="docling",
             do_picture_description=False,
             do_picture_classification=False,
             generate_images=False,

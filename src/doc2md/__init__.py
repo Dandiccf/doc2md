@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 from doc2md.config import PipelineConfig
 from doc2md.converter import ConversionResult, DocumentPipeline

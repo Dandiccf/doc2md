@@ -20,6 +20,9 @@ class PipelineConfig:
     uncommented and used as needed.
     """
 
+    # -- Engine -------------------------------------------------------------
+    engine: str = "auto"  # "auto", "pymupdf4llm", "docling"
+
     # -- OCR ----------------------------------------------------------------
     ocr_engine: str = "auto"  # "auto", "easyocr", "rapidocr", "tesseract", "ocrmac" (macOS only)
     ocr_lang: list[str] = field(default_factory=lambda: ["en"])
@@ -140,6 +143,7 @@ class PipelineConfig:
     def to_dict(self) -> dict:
         """Return a serialisable dict of the active configuration."""
         return {
+            "engine": self.engine,
             "ocr_engine": self.ocr_engine,
             "ocr_lang": self.ocr_lang,
             "force_full_page_ocr": self.force_full_page_ocr,
