@@ -28,6 +28,12 @@ Or with uv (add to an existing project):
 uv add git+https://github.com/Dandiccf/doc2md.git
 ```
 
+Upgrade with uv:
+
+```bash
+uv add --upgrade git+https://github.com/Dandiccf/doc2md.git
+```
+
 For local development:
 
 ```bash
