@@ -22,7 +22,8 @@
       "WebFetch(domain:pypi.org)",
       "Bash(curl:*)",
       "Bash(python3:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(find src:*)"
     ]
   },
   "enabledPlugins": {
