@@ -492,6 +492,116 @@ class DocumentPipeline:
         md_path.write_text(md_text, encoding="utf-8")
         return artifacts_dir
 
+    # -- Page-order workaround ----------------------------------------------
+
+    @staticmethod
+    def _has_page_order_violation(doc) -> bool:
+        """Detect cross-page element misordering in Docling's document tree.
+
+        Returns ``True`` when iterating items in tree order yields elements
+        whose page numbers go backwards — e.g. a page-2 element appears
+        before all page-1 elements have been emitted.  This happens when
+        Docling's layout model groups items from different pages into the
+        same list or section node.
+        """
+        max_page = 0
+        for element, _level in doc.iterate_items():
+            prov = getattr(element, "prov", None)
+            if not prov:
+                continue
+            page_no = prov[0].page_no
+            if page_no < max_page:
+                return True
+            max_page = max(max_page, page_no)
+        return False
+
+    def _export_markdown_page_ordered(
+        self,
+        doc,
+        page_break_placeholder: str = "",
+        image_path_prefix: str = "",
+    ) -> str:
+        """Export markdown in strict page order.
+
+        Fallback for documents where Docling's tree structure produces wrong
+        element ordering due to cross-page grouping.  Iterates elements
+        page-by-page using ``iterate_items(page_no=…)`` and formats them
+        as markdown, bypassing the tree-based serializer.
+        """
+        parts: list[str] = []
+        sorted_pages = sorted(doc.pages.keys())
+        pic_idx = 0
+
+        for page_idx, page_no in enumerate(sorted_pages):
+            if page_idx > 0 and page_break_placeholder:
+                parts.append(page_break_placeholder)
+                parts.append("")
+
+            for element, _level in doc.iterate_items(page_no=page_no):
+                # -- Pictures --
+                if isinstance(element, PictureItem):
+                    if image_path_prefix:
+                        prefix = image_path_prefix.rstrip("/")
+                        img_ref = f"{prefix}/picture_{pic_idx:03d}.png"
+                    else:
+                        img_ref = f"images/picture_{pic_idx:03d}.png"
+
+                    desc = ""
+                    if (
+                        element.meta is not None
+                        and hasattr(element.meta, "description")
+                        and element.meta.description is not None
+                        and element.meta.description.text
+                    ):
+                        desc = strip_think_tags(
+                            element.meta.description.text,
+                        ).strip()
+
+                    if desc:
+                        summary, detail = _parse_description(desc)
+                        alt = _sanitize_alt_text(summary) if summary else "Image"
+                        parts.append(f"![{alt}]({img_ref})")
+                        if detail:
+                            blockquote = "\n".join(
+                                f"> {line}" for line in detail.splitlines()
+                            )
+                            parts.append("")
+                            parts.append(blockquote)
+                    else:
+                        parts.append(f"![Image]({img_ref})")
+
+                    parts.append("")
+                    pic_idx += 1
+                    continue
+
+                # -- Tables --
+                if isinstance(element, TableItem):
+                    text = getattr(element, "text", "").strip()
+                    if text:
+                        parts.append(text)
+                    parts.append("")
+                    continue
+
+                # -- Text / list items / headings --
+                text = getattr(element, "text", "").strip()
+                if not text:
+                    continue
+
+                label = getattr(element, "label", None)
+                if label == DocItemLabel.TITLE:
+                    parts.append(f"# {text}")
+                elif label == DocItemLabel.SECTION_HEADER:
+                    parts.append(f"## {text}")
+                elif label == DocItemLabel.LIST_ITEM:
+                    parts.append(f"- {text}")
+                elif label == DocItemLabel.CAPTION:
+                    parts.append(f"*{text}*")
+                else:
+                    parts.append(text)
+                parts.append("")
+
+        return "\n".join(parts)
+
     def convert(self, source: str | Path, output_dir: str | Path | None = None) -> ConversionResult:
         """Convert a single document and save all outputs.
 
@@ -563,7 +673,49 @@ class DocumentPipeline:
             if cfg.do_picture_description and not self._is_standalone_image(source_str):
                 self._describe_document_images(conv_res.document)
 
-            if cfg.generate_images or cfg.do_picture_description:
+            # Detect cross-page ordering issues in Docling's document tree.
+            # Some PDFs cause Docling to group items from different pages
+            # into the same list node, producing wrong element order.
+            _page_misordered = self._has_page_order_violation(
+                conv_res.document,
+            )
+            if _page_misordered:
+                logger.warning(
+                    "Detected page-order issue in %s; "
+                    "using page-ordered fallback",
+                    source_name,
+                )
+
+            if _page_misordered:
+                # Fallback: export markdown in strict page order.
+                md_text = self._export_markdown_page_ordered(
+                    conv_res.document,
+                    page_break_placeholder=cfg.page_break_placeholder,
+                    image_path_prefix=cfg.image_path_prefix,
+                )
+                md_path.write_text(md_text, encoding="utf-8")
+                if cfg.generate_images or cfg.do_picture_description:
+                    images_dir = output_dir / "images"
+                    images_dir.mkdir(exist_ok=True)
+                    result.images_dir = images_dir
+                    pic_idx = 0
+                    for element, _level in conv_res.document.iterate_items():
+                        if isinstance(element, PictureItem):
+                            try:
+                                img = element.get_image(conv_res.document)
+                                if img is not None:
+                                    img.save(
+                                        images_dir / f"picture_{pic_idx:03d}.png",
+                                        format="PNG",
+                                    )
+                                    pic_idx += 1
+                            except Exception as img_err:
+                                logger.warning(
+                                    "Failed to save image %d: %s",
+                                    pic_idx,
+                                    img_err,
+                                )
+            elif cfg.generate_images or cfg.do_picture_description:
                 images_dir = output_dir / "images"
                 images_dir.mkdir(exist_ok=True)
                 result.images_dir = images_dir
