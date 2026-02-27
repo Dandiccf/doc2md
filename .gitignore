@@ -1,6 +1,7 @@
 __pycache__/
 .venv/
 .env
+.claude/
 *_output/
 dist/
 *.egg-info/
