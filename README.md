@@ -16,6 +16,12 @@ With the fast PyMuPDF4LLM engine (recommended):
 pip install "doc2md[pymupdf] @ git+https://github.com/Dandiccf/doc2md.git"
 ```
 
+Upgrade to the latest version:
+
+```bash
+pip install --upgrade git+https://github.com/Dandiccf/doc2md.git
+```
+
 Or with uv (add to an existing project):
 
 ```bash
