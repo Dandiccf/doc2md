@@ -593,7 +593,11 @@ class DocumentPipeline:
                 elif label == DocItemLabel.SECTION_HEADER:
                     parts.append(f"## {text}")
                 elif label == DocItemLabel.LIST_ITEM:
-                    parts.append(f"- {text}")
+                    marker = getattr(element, "marker", "")
+                    if marker:
+                        parts.append(f"{marker} {text}")
+                    else:
+                        parts.append(f"- {text}")
                 elif label == DocItemLabel.CAPTION:
                     parts.append(f"*{text}*")
                 else:
