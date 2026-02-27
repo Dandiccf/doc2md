@@ -1,6 +1,6 @@
 # doc2md
 
-Standalone document-to-markdown conversion pipeline powered by [Docling](https://github.com/docling-project/docling). Extracts text, tables, and images from PDFs, DOCX, PPTX, and more — with optional AI-powered image descriptions via OpenAI or a local vision model (Ollama, LM Studio). Standalone images (JPG, PNG, WEBP, etc.) get full vision-LLM analysis automatically.
+Standalone document-to-markdown conversion pipeline with a **dual-engine architecture**: simple text-only PDFs are converted in milliseconds using [PyMuPDF4LLM](https://github.com/pymupdf/RAG), while complex documents (images, tables, scans) use [Docling](https://github.com/docling-project/docling)'s deep-learning pipeline. Extracts text, tables, and images from PDFs, DOCX, PPTX, and more — with optional AI-powered image descriptions via OpenAI or a local vision model (Ollama, LM Studio).
 
 ## Installation
 
@@ -8,6 +8,12 @@ From GitHub:
 
 ```bash
 pip install git+https://github.com/Dandiccf/doc2md.git
+```
+
+With the fast PyMuPDF4LLM engine (recommended):
+
+```bash
+pip install "doc2md[pymupdf] @ git+https://github.com/Dandiccf/doc2md.git"
 ```
 
 Or with uv (add to an existing project):
@@ -24,16 +30,15 @@ cd doc2md
 uv sync
 ```
 
-### OCR extras
-
-The default install uses Docling's auto-detected OCR. Install an extra for a specific engine:
+### Optional extras
 
 ```bash
-pip install "doc2md[ocrmac] @ git+https://github.com/Dandiccf/doc2md.git"    # macOS Vision OCR (best on macOS)
-pip install "doc2md[easyocr] @ git+https://github.com/Dandiccf/doc2md.git"   # EasyOCR (cross-platform, GPU)
-pip install "doc2md[rapidocr] @ git+https://github.com/Dandiccf/doc2md.git"  # RapidOCR (lightweight)
-pip install "doc2md[tesseract] @ git+https://github.com/Dandiccf/doc2md.git" # Tesseract
-pip install "doc2md[all] @ git+https://github.com/Dandiccf/doc2md.git"       # Everything
+pip install "doc2md[pymupdf] @ git+https://github.com/Dandiccf/doc2md.git"    # Fast PyMuPDF4LLM engine for text-only PDFs
+pip install "doc2md[ocrmac] @ git+https://github.com/Dandiccf/doc2md.git"     # macOS Vision OCR (best on macOS)
+pip install "doc2md[easyocr] @ git+https://github.com/Dandiccf/doc2md.git"    # EasyOCR (cross-platform, GPU)
+pip install "doc2md[rapidocr] @ git+https://github.com/Dandiccf/doc2md.git"   # RapidOCR (lightweight)
+pip install "doc2md[tesseract] @ git+https://github.com/Dandiccf/doc2md.git"  # Tesseract
+pip install "doc2md[all] @ git+https://github.com/Dandiccf/doc2md.git"        # Everything
 ```
 
 ## Quick start
@@ -82,6 +87,36 @@ config = PipelineConfig(ocr_engine="ocrmac", ocr_lang=["en-US"])  # macOS only
 config = PipelineConfig(ocr_engine="easyocr", ocr_lang=["en"])    # cross-platform, GPU
 ```
 
+## Dual-engine architecture
+
+doc2md automatically selects the best conversion engine for each document:
+
+| Signal | PyMuPDF4LLM | Docling |
+|---|---|---|
+| Text-only PDF (no images, no tables) | ✅ Fast, rule-based | |
+| PDF with images/figures | | ✅ DL layout + extraction |
+| PDF with tables (ruled grids) | | ✅ TableFormer |
+| Scanned PDF (needs OCR) | | ✅ OCR + DL layout |
+| Non-PDF formats (DOCX, PPTX, HTML…) | | ✅ |
+| URL source | | ✅ |
+
+The `engine` config option controls this:
+
+```python
+from doc2md import convert, PipelineConfig
+
+# Auto mode (default) — analyzes the PDF and picks the best engine
+config = PipelineConfig(engine="auto", do_picture_description=False)
+
+# Force a specific engine
+config = PipelineConfig(engine="pymupdf4llm", do_picture_description=False)
+config = PipelineConfig(engine="docling", do_picture_description=False)
+```
+
+In auto mode, a lightweight pre-analyzer samples pages using pypdfium2 to detect text density, image coverage, table grid lines, and scanned pages — adding <100ms overhead. If PyMuPDF4LLM is not installed, auto mode falls back to Docling for everything.
+
+The `metadata.json` output includes an `engine_used` field so you always know which engine was used.
+
 ## Configuration
 
 All parameters are set via `PipelineConfig`. Pass it to `convert()` or `DocumentPipeline()`:
@@ -90,12 +125,19 @@ All parameters are set via `PipelineConfig`. Pass it to `convert()` or `Document
 from doc2md import convert, PipelineConfig
 
 config = PipelineConfig(
+    engine="auto",
     ocr_engine="ocrmac",
     table_mode="fast",
     do_picture_description=False,
 )
 result = convert("document.pdf", config=config)
 ```
+
+### Engine
+
+| Parameter | Default | Choices / Type | Description |
+|---|---|---|---|
+| `engine` | `"auto"` | `"auto"`, `"pymupdf4llm"`, `"docling"` | Conversion engine. `"auto"` analyzes the PDF and picks the fastest engine that can handle it. `"pymupdf4llm"` requires the `[pymupdf]` extra. |
 
 ### OCR
 
@@ -381,16 +423,26 @@ result = convert("document.pdf", config=config)
 
 ## Output structure
 
+**Docling engine** (complex documents with images/tables):
+
 ```
 output_dir/
 ├── output.md               # Markdown with images and descriptions
 ├── output.json             # Full structured JSON export
 ├── output_artifacts/       # Images referenced in the Markdown (Docling hash names)
 ├── images/                 # Clean extracted images (picture_000.png, ...)
-└── metadata.json           # Conversion metadata (timing, element counts)
+└── metadata.json           # Conversion metadata (timing, element counts, engine_used)
 ```
 
-`result.images_dir` points to `images/` by default. When `image_path_prefix` is set, it points to `output_artifacts/` instead — these are the files whose names match the rewritten Markdown image references, ready for upload to a remote store.
+**PyMuPDF4LLM engine** (text-only PDFs):
+
+```
+output_dir/
+├── output.md               # Markdown text
+└── metadata.json           # Conversion metadata (timing, element counts, engine_used)
+```
+
+`result.images_dir` points to `images/` by default. When `image_path_prefix` is set, it points to `output_artifacts/` instead — these are the files whose names match the rewritten Markdown image references, ready for upload to a remote store. For the PyMuPDF4LLM engine, `result.images_dir` and `result.json_path` are `None`.
 
 ## Testing
 
