@@ -102,33 +102,35 @@ class DocumentPipeline:
 
     def __init__(self, config: PipelineConfig | None = None) -> None:
         self.config = config or PipelineConfig()
-        self._converter: DocumentConverter | None = None
+        self._converters: dict[bool, DocumentConverter] = {}
+        self._last_analysis = None  # cached PdfAnalysis from _resolve_engine
 
-    def _build_converter(self) -> DocumentConverter:
+    def _build_converter(self, do_ocr: bool = False) -> DocumentConverter:
         """Build a DocumentConverter from the current config."""
         cfg = self.config
         opts = PdfPipelineOptions()
 
         # OCR configuration
-        opts.do_ocr = True
-        if cfg.ocr_engine == "easyocr":
-            opts.ocr_options = EasyOcrOptions(
-                lang=cfg.ocr_lang,
-                force_full_page_ocr=cfg.force_full_page_ocr,
-                bitmap_area_threshold=cfg.bitmap_area_threshold,
-            )
-        elif cfg.ocr_engine == "ocrmac":
-            opts.ocr_options = OcrMacOptions(
-                lang=cfg.ocr_lang,
-                force_full_page_ocr=cfg.force_full_page_ocr,
-                bitmap_area_threshold=cfg.bitmap_area_threshold,
-            )
-        else:
-            from docling.datamodel.pipeline_options import OcrAutoOptions
-            opts.ocr_options = OcrAutoOptions(
-                force_full_page_ocr=cfg.force_full_page_ocr,
-                bitmap_area_threshold=cfg.bitmap_area_threshold,
-            )
+        opts.do_ocr = do_ocr
+        if do_ocr:
+            if cfg.ocr_engine == "easyocr":
+                opts.ocr_options = EasyOcrOptions(
+                    lang=cfg.ocr_lang,
+                    force_full_page_ocr=cfg.force_full_page_ocr,
+                    bitmap_area_threshold=cfg.bitmap_area_threshold,
+                )
+            elif cfg.ocr_engine == "ocrmac":
+                opts.ocr_options = OcrMacOptions(
+                    lang=cfg.ocr_lang,
+                    force_full_page_ocr=cfg.force_full_page_ocr,
+                    bitmap_area_threshold=cfg.bitmap_area_threshold,
+                )
+            else:
+                from docling.datamodel.pipeline_options import OcrAutoOptions
+                opts.ocr_options = OcrAutoOptions(
+                    force_full_page_ocr=cfg.force_full_page_ocr,
+                    bitmap_area_threshold=cfg.bitmap_area_threshold,
+                )
 
         # Table structure
         opts.do_table_structure = True
@@ -188,10 +190,10 @@ class DocumentPipeline:
             format_options=format_options,
         )
 
-    def _get_converter(self) -> DocumentConverter:
-        if self._converter is None:
-            self._converter = self._build_converter()
-        return self._converter
+    def _get_converter(self, do_ocr: bool = False) -> DocumentConverter:
+        if do_ocr not in self._converters:
+            self._converters[do_ocr] = self._build_converter(do_ocr)
+        return self._converters[do_ocr]
 
     @staticmethod
     def _rewrite_image_paths(md_text: str, prefix: str) -> str:
@@ -646,6 +648,7 @@ class DocumentPipeline:
         from doc2md.analyzer import analyze_pdf
 
         analysis = analyze_pdf(source_str)
+        self._last_analysis = analysis
         if analysis.is_scanned:
             return "docling"
         if analysis.has_images:
@@ -654,6 +657,31 @@ class DocumentPipeline:
             return "docling"
 
         return "pymupdf4llm"
+
+    def _resolve_do_ocr(self, source_str: str, is_url: bool) -> bool:
+        """Decide whether to enable OCR for this document.
+
+        Returns ``True`` when OCR should be enabled.
+        """
+        setting = self.config.do_ocr.lower().strip()
+        if setting in ("true", "yes", "1"):
+            return True
+        if setting in ("false", "no", "0"):
+            return False
+
+        # Auto mode: enable OCR only when needed
+        if is_url:
+            return True  # can't pre-analyse remote files
+
+        ext = Path(source_str).suffix.lstrip(".").lower()
+        if ext in _IMAGE_EXTENSIONS:
+            return True  # standalone images need OCR
+
+        # Use the analysis from _resolve_engine if available
+        if self._last_analysis is not None:
+            return self._last_analysis.is_scanned
+
+        return False
 
     # -- PyMuPDF4LLM conversion path ----------------------------------------
 
@@ -722,7 +750,9 @@ class DocumentPipeline:
         result: ConversionResult,
     ) -> None:
         """Convert a document using the Docling pipeline."""
-        converter = self._get_converter()
+        do_ocr = self._resolve_do_ocr(source_str, is_url)
+        converter = self._get_converter(do_ocr)
+        logger.info("OCR %s for %s", "enabled" if do_ocr else "disabled", source_name)
 
         with timed() as timing:
             conv_res = converter.convert(
@@ -932,6 +962,7 @@ class DocumentPipeline:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
+            self._last_analysis = None
             engine = self._resolve_engine(source_str, is_url)
             result.metadata.engine_used = engine
             logger.info("Using engine: %s for %s", engine, source_name)

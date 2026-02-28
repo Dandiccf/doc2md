@@ -24,6 +24,7 @@ class PipelineConfig:
     engine: str = "auto"  # "auto", "pymupdf4llm", "docling"
 
     # -- OCR ----------------------------------------------------------------
+    do_ocr: str = "auto"  # "auto" (only for scanned docs), "true" (always), "false" (never)
     ocr_engine: str = "auto"  # "auto", "easyocr", "rapidocr", "tesseract", "ocrmac" (macOS only)
     ocr_lang: list[str] = field(default_factory=lambda: ["en"])
     force_full_page_ocr: bool = False
@@ -144,6 +145,7 @@ class PipelineConfig:
         """Return a serialisable dict of the active configuration."""
         return {
             "engine": self.engine,
+            "do_ocr": self.do_ocr,
             "ocr_engine": self.ocr_engine,
             "ocr_lang": self.ocr_lang,
             "force_full_page_ocr": self.force_full_page_ocr,

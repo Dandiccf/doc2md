@@ -94,6 +94,10 @@ from doc2md import convert, PipelineConfig
 config = PipelineConfig(do_picture_description=False)
 result = convert("document.pdf", config=config)
 
+# Force OCR on all documents (e.g. to extract text from embedded images)
+config = PipelineConfig(do_ocr="true")
+result = convert("document.pdf", config=config)
+
 # Use a specific OCR engine (requires the matching extra installed)
 config = PipelineConfig(ocr_engine="ocrmac", ocr_lang=["en-US"])  # macOS only
 config = PipelineConfig(ocr_engine="easyocr", ocr_lang=["en"])    # cross-platform, GPU
@@ -106,11 +110,11 @@ doc2md automatically selects the best conversion engine for each document:
 | Signal | PyMuPDF4LLM | Docling |
 |---|---|---|
 | Text-only PDF (no images, no tables) | ✅ Fast, rule-based | |
-| PDF with images/figures | | ✅ DL layout + extraction |
-| PDF with tables (ruled grids) | | ✅ TableFormer |
+| PDF with images/figures | | ✅ DL layout + extraction (no OCR) |
+| PDF with tables (ruled grids) | | ✅ TableFormer (no OCR) |
 | Scanned PDF (needs OCR) | | ✅ OCR + DL layout |
 | Non-PDF formats (DOCX, PPTX, HTML…) | | ✅ |
-| URL source | | ✅ |
+| URL source | | ✅ (OCR enabled) |
 
 The `engine` config option controls this:
 
@@ -126,6 +130,8 @@ config = PipelineConfig(engine="docling", do_picture_description=False)
 ```
 
 In auto mode, a lightweight pre-analyzer samples pages using pypdfium2 to detect text density, image coverage, table grid lines, and scanned pages — adding <100ms overhead. If PyMuPDF4LLM is not installed, auto mode falls back to Docling for everything.
+
+OCR is also resolved automatically (`do_ocr="auto"`): it is only enabled for scanned PDFs, standalone image files, and URLs. Non-scanned PDFs routed to Docling (e.g. for tables or figures) skip OCR entirely, avoiding the overhead of loading OCR models. Set `do_ocr="true"` if you need to extract text embedded inside images (chart labels, diagram annotations, etc.).
 
 The `metadata.json` output includes an `engine_used` field so you always know which engine was used.
 
@@ -155,6 +161,7 @@ result = convert("document.pdf", config=config)
 
 | Parameter | Default | Choices / Type | Description |
 |---|---|---|---|
+| `do_ocr` | `"auto"` | `"auto"`, `"true"`, `"false"` | Whether to enable OCR in the Docling pipeline. `"auto"` enables OCR only for scanned PDFs, standalone image files (JPG/PNG passed directly), and URLs. Text-rich PDFs routed to Docling for tables or figures skip OCR entirely. `"true"` always loads OCR models. `"false"` never uses OCR. |
 | `ocr_engine` | `"auto"` | `"auto"`, `"easyocr"`, `"rapidocr"`, `"tesseract"`, `"ocrmac"` | OCR backend. `"auto"` picks the best available. `"ocrmac"` requires macOS and the `[ocrmac]` extra. |
 | `ocr_lang` | `["en"]` | list of str | Language codes. Use `["en-US"]` for `ocrmac`, `["en"]` for others. |
 | `force_full_page_ocr` | `False` | bool | Run OCR on every page, not just pages with bitmaps. Useful for scanned documents. |
