@@ -663,6 +663,9 @@ class DocumentPipeline:
 
         Returns ``True`` when OCR should be enabled.
         """
+        if self.config.force_full_page_ocr:
+            return True  # explicit full-page OCR always implies do_ocr
+
         setting = self.config.do_ocr.lower().strip()
         if setting in ("true", "yes", "1"):
             return True
@@ -670,6 +673,7 @@ class DocumentPipeline:
             return False
 
         # Auto mode: enable OCR only when needed
+
         if is_url:
             return True  # can't pre-analyse remote files
 
