@@ -56,6 +56,24 @@ class ElementCounts:
 
 
 @dataclass
+class VisionUsage:
+    """Aggregated token usage from picture-description (vision) API calls.
+
+    Each described image triggers one vision API request. The OpenAI-compatible
+    image endpoint reports only ``total_tokens`` per call (no prompt/completion
+    split), so ``total_tokens`` here is the sum of those per-image totals.
+    ``call_count`` is the number of vision API calls attempted. Both are zero
+    when picture description is disabled or no describable images were found.
+
+    Callers can use this to meter the downstream LLM cost of conversion, which
+    is otherwise invisible (the API calls happen inside the pipeline).
+    """
+
+    call_count: int = 0
+    total_tokens: int = 0
+
+
+@dataclass
 class ConversionMetadata:
     """Full metadata for a single conversion run."""
 
@@ -63,6 +81,7 @@ class ConversionMetadata:
     engine_used: str = ""
     timing: TimingInfo = field(default_factory=TimingInfo)
     elements: ElementCounts = field(default_factory=ElementCounts)
+    vision_usage: VisionUsage = field(default_factory=VisionUsage)
     error: str | None = None
     docling_version: str = ""
     config: dict = field(default_factory=dict)
@@ -79,6 +98,7 @@ class ConversionMetadata:
         meta.engine_used = data.get("engine_used", "")
         meta.timing = TimingInfo(**data.get("timing", {}))
         meta.elements = ElementCounts(**data.get("elements", {}))
+        meta.vision_usage = VisionUsage(**data.get("vision_usage", {}))
         meta.error = data.get("error")
         meta.docling_version = data.get("docling_version", "")
         meta.config = data.get("config", {})

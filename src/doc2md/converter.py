@@ -52,6 +52,7 @@ from doc2md.utils import (
     ConversionMetadata,
     ElementCounts,
     TimingInfo,
+    VisionUsage,
     logger,
     timed,
 )
@@ -335,12 +336,16 @@ class DocumentPipeline:
                 parts.append(el.text.strip())
         return "\n".join(parts)
 
-    def _describe_document_images(self, doc) -> None:
+    def _describe_document_images(self, doc) -> VisionUsage:
         """Describe embedded images using the vision API with document context.
 
         Iterates over all ``PictureItem`` elements, builds a per-image prompt
         that includes the document title and surrounding text, and stores the
         result in ``item.meta.description``.
+
+        Returns a :class:`VisionUsage` aggregating the token cost of every
+        vision API call made (``call_count`` images, summed ``total_tokens``)
+        so the caller can meter the otherwise-invisible LLM spend.
         """
         from docling.utils.api_image_request import api_image_request
 
@@ -366,12 +371,13 @@ class DocumentPipeline:
             tasks.append((element, img, prompt))
 
         if not tasks:
-            return
+            return VisionUsage()
 
-        def _describe(task: tuple[PictureItem, PILImage.Image, str]) -> None:
+        def _describe(task: tuple[PictureItem, PILImage.Image, str]) -> int:
+            """Describe one image; return the call's total token count (0 on failure)."""
             item, img, prompt = task
             try:
-                text, _tok, _stop = api_image_request(
+                text, num_tokens, _stop = api_image_request(
                     image=img,
                     prompt=prompt,
                     url=api_url,
@@ -384,11 +390,17 @@ class DocumentPipeline:
                     if item.meta is None:
                         item.meta = PictureMeta()
                     item.meta.description = DescriptionMetaField(text=text)
+                return int(num_tokens or 0)
             except Exception as exc:
                 logger.warning("Vision API call failed for image: %s", exc)
+                return 0
 
         with ThreadPoolExecutor(max_workers=cfg.picture_description_concurrency) as pool:
-            list(pool.map(_describe, tasks))
+            # pool.map returns per-task token counts in submission order; summing
+            # is the thread-safe way to aggregate (no shared mutable accumulator).
+            token_counts = list(pool.map(_describe, tasks))
+
+        return VisionUsage(call_count=len(tasks), total_tokens=sum(token_counts))
 
     # -- Standalone image description ---------------------------------------
 
@@ -397,17 +409,19 @@ class DocumentPipeline:
         image: PILImage.Image,
         doc_title: str = "",
         surrounding_text: str = "",
-    ) -> str | None:
+    ) -> tuple[str | None, int]:
         """Send a standalone image to the vision API with context.
 
-        Returns the description text, or None on failure.
+        Returns ``(description, total_tokens)``. ``description`` is the text or
+        ``None`` on failure; ``total_tokens`` is the vision call's token cost
+        (0 when the call failed or reported no usage).
         """
         from docling.utils.api_image_request import api_image_request
 
         api_url, headers, params = self._get_vision_api_config()
         prompt = self._build_contextual_prompt(doc_title, surrounding_text)
         try:
-            text, _tokens, _stop = api_image_request(
+            text, num_tokens, _stop = api_image_request(
                 image=image,
                 prompt=prompt,
                 url=api_url,
@@ -415,13 +429,14 @@ class DocumentPipeline:
                 headers=headers,
                 **params,
             )
+            tokens = int(num_tokens or 0)
             if text:
-                return strip_think_tags(text).strip()
+                return strip_think_tags(text).strip(), tokens
             logger.warning("Vision API returned empty response for standalone image")
-            return None
+            return None, tokens
         except Exception as exc:
             logger.warning("Vision API call failed for standalone image: %s", exc)
-            return None
+            return None, 0
 
     def _build_standalone_image_markdown(
         self,
@@ -788,7 +803,9 @@ class DocumentPipeline:
 
         # Post-processing: describe images with document context
         if cfg.do_picture_description and not self._is_standalone_image(source_str):
-            self._describe_document_images(conv_res.document)
+            result.metadata.vision_usage = self._describe_document_images(
+                conv_res.document,
+            )
 
         # Detect cross-page ordering issues in Docling's document tree.
         _page_misordered = self._has_page_order_violation(conv_res.document)
@@ -882,9 +899,12 @@ class DocumentPipeline:
             source_path = Path(source_str)
             docling_md = md_path.read_text(encoding="utf-8")
             ocr_text = docling_md.strip()
+            made_vision_call = False
+            vision_tokens = 0
             try:
                 image = PILImage.open(source_path).convert("RGB")
-                description = self._describe_standalone_image(
+                made_vision_call = True
+                description, vision_tokens = self._describe_standalone_image(
                     image,
                     doc_title=source_path.stem,
                     surrounding_text=ocr_text if len(ocr_text) > 10 else "",
@@ -894,6 +914,10 @@ class DocumentPipeline:
                     "Failed to open image for description: %s", img_exc,
                 )
                 description = None
+            result.metadata.vision_usage = VisionUsage(
+                call_count=1 if made_vision_call else 0,
+                total_tokens=int(vision_tokens or 0),
+            )
             md_text, images_dir = self._build_standalone_image_markdown(
                 source_path, docling_md, description, output_dir,
             )

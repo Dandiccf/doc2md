@@ -135,9 +135,10 @@ class TestDescribeStandaloneImage:
                 "docling.utils.api_image_request.api_image_request",
                 return_value=("A blue square.", 50, mock_stop),
             ):
-                result = pipeline._describe_standalone_image(image)
+                desc, tokens = pipeline._describe_standalone_image(image)
 
-        assert result == "A blue square."
+        assert desc == "A blue square."
+        assert tokens == 50  # surfaced for usage metering
 
     def test_strips_think_tags(self) -> None:
         pipeline = DocumentPipeline(config=PipelineConfig(
@@ -151,9 +152,10 @@ class TestDescribeStandaloneImage:
             "docling.utils.api_image_request.api_image_request",
             return_value=("<think>reasoning</think>A blue square.", 50, mock_stop),
         ):
-            result = pipeline._describe_standalone_image(image)
+            desc, tokens = pipeline._describe_standalone_image(image)
 
-        assert result == "A blue square."
+        assert desc == "A blue square."
+        assert tokens == 50
 
     def test_api_failure_returns_none(self) -> None:
         pipeline = DocumentPipeline(config=PipelineConfig(
@@ -166,9 +168,10 @@ class TestDescribeStandaloneImage:
             "docling.utils.api_image_request.api_image_request",
             side_effect=ConnectionError("timeout"),
         ):
-            result = pipeline._describe_standalone_image(image)
+            desc, tokens = pipeline._describe_standalone_image(image)
 
-        assert result is None
+        assert desc is None
+        assert tokens == 0  # failed call → no tokens
 
     def test_empty_response_returns_none(self) -> None:
         pipeline = DocumentPipeline(config=PipelineConfig(
@@ -182,9 +185,10 @@ class TestDescribeStandaloneImage:
             "docling.utils.api_image_request.api_image_request",
             return_value=("", 0, mock_stop),
         ):
-            result = pipeline._describe_standalone_image(image)
+            desc, tokens = pipeline._describe_standalone_image(image)
 
-        assert result is None
+        assert desc is None
+        assert tokens == 0  # empty response reports 0 tokens
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +232,10 @@ class TestConvertStandaloneImage:
 
         assert result.success, f"Conversion failed: {result.error}"
         assert mock_api.called
+
+        # vision token usage is surfaced on the result for downstream metering
+        assert result.metadata.vision_usage.call_count == 1
+        assert result.metadata.vision_usage.total_tokens == 80
 
         md = result.markdown_path.read_text(encoding="utf-8")
         assert "![A green square.](images/photo.png)" in md or "![A green square.](" in md

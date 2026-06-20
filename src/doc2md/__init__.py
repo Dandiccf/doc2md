@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 from doc2md.config import PipelineConfig
 from doc2md.converter import ConversionResult, DocumentPipeline
-from doc2md.utils import setup_logging
+from doc2md.utils import VisionUsage, setup_logging
 
 __all__ = [
     "__version__",
@@ -14,6 +14,7 @@ __all__ = [
     "DocumentPipeline",
     "ConversionResult",
     "PipelineConfig",
+    "VisionUsage",
     "setup_logging",
 ]
 
