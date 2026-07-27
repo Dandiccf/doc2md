@@ -9,6 +9,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+DEFAULT_PICTURE_DESCRIPTION_PROMPT = (
+    "Explain what this image conveys. Focus on the meaning, "
+    "key findings, and takeaways rather than describing visual "
+    "elements like colors or layout."
+)
+
+# What the "detail" field asks for while structured_description is on and the
+# caller has not said otherwise. Kept verbatim from before this instruction
+# became overridable, so an untouched config produces the same prompt it always
+# did.
+DEFAULT_STRUCTURED_DETAIL_PROMPT = (
+    "A thorough explanation of the image content, key findings, data, and "
+    "takeaways. Focus on meaning rather than visual styling."
+)
+
 
 @dataclass
 class PipelineConfig:
@@ -60,13 +75,20 @@ class PipelineConfig:
     # -- Picture description ------------------------------------------------
     do_picture_description: bool = True
     do_picture_classification: bool = True
-    structured_description: bool = False  # Request JSON {summary, detail} from vision model
+    # Request JSON {summary, detail} from the vision model. The JSON contract is
+    # fixed; picture_description_prompt still steers what goes into "detail".
+    structured_description: bool = False
     picture_description_provider: str = "openai"  # "openai" or "local" (Ollama, LM Studio, etc.)
-    picture_description_prompt: str = (
-        "Explain what this image conveys. Focus on the meaning, "
-        "key findings, and takeaways rather than describing visual "
-        "elements like colors or layout."
-    )
+    # What the vision model should say about a picture. Applies in both modes:
+    # on its own in plain mode, and as the "detail" instruction inside the JSON
+    # contract when structured_description is on.
+    #
+    # The default suits pictures that illustrate something — a chart, a diagram,
+    # a screenshot — where the meaning matters more than the pixels. It is the
+    # wrong instruction when the picture IS the subject: a photo annex in a legal
+    # file, a damage report, a product sheet. There you want the things in the
+    # image named, so they can be searched for.
+    picture_description_prompt: str = DEFAULT_PICTURE_DESCRIPTION_PROMPT
     picture_description_lang: str = ""  # ISO 639-1 code (e.g. "en", "de", "ja") or "auto" to match surrounding document text; empty = no language instruction
     picture_description_timeout: int = 60
     picture_description_concurrency: int = 2
