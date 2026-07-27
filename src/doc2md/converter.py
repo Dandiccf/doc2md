@@ -41,7 +41,11 @@ from docling_core.types.doc.labels import DocItemLabel, PictureClassificationLab
 from PIL import Image as PILImage
 from pydantic import AnyUrl
 
-from doc2md.config import PipelineConfig
+from doc2md.config import (
+    DEFAULT_PICTURE_DESCRIPTION_PROMPT,
+    DEFAULT_STRUCTURED_DETAIL_PROMPT,
+    PipelineConfig,
+)
 from doc2md.serializers import (
     DescriptionEnrichedImageDocSerializer,
     _parse_description,
@@ -238,21 +242,38 @@ class DocumentPipeline:
     # -- Contextual prompt construction ------------------------------------
 
     def _build_base_prompt(self) -> str:
-        """Return the base vision prompt (plain or structured)."""
+        """Return the base vision prompt (plain or structured).
+
+        ``structured_description`` fixes the *shape* of the answer — a JSON
+        object with ``summary`` and ``detail`` — while
+        ``picture_description_prompt`` says what the model should look for. The
+        two are independent, so the custom instruction drives the ``detail``
+        field instead of being discarded.
+
+        It used to be discarded: turning on structured descriptions silently
+        replaced the caller's prompt with a hardcoded one, which made the two
+        options mutually exclusive with nothing to indicate it. A caller could
+        set a prompt, see it take effect in plain mode, enable structured mode
+        and watch it stop mattering.
+        """
         cfg = self.config
-        if cfg.structured_description:
-            return (
-                "Analyze this image and respond with a JSON object containing "
-                "exactly two fields:\n"
-                '- "summary": A concise 1-2 sentence description of what the '
-                "image shows and its key message. Use only plain text — letters, "
-                "numbers, periods, commas, hyphens, and spaces. No brackets, "
-                "backslashes, or special markdown characters.\n"
-                '- "detail": A thorough explanation of the image content, key '
-                "findings, data, and takeaways. Focus on meaning rather than "
-                "visual styling."
-            )
-        return cfg.picture_description_prompt
+        if not cfg.structured_description:
+            return cfg.picture_description_prompt
+
+        detail = cfg.picture_description_prompt
+        if detail == DEFAULT_PICTURE_DESCRIPTION_PROMPT:
+            # Nothing was asked for, so keep the wording this mode has always
+            # used rather than swapping in the plain-mode default.
+            detail = DEFAULT_STRUCTURED_DETAIL_PROMPT
+        return (
+            "Analyze this image and respond with a JSON object containing "
+            "exactly two fields:\n"
+            '- "summary": A concise 1-2 sentence description of what the '
+            "image shows and its key message. Use only plain text — letters, "
+            "numbers, periods, commas, hyphens, and spaces. No brackets, "
+            "backslashes, or special markdown characters.\n"
+            f'- "detail": {detail}'
+        )
 
     def _build_contextual_prompt(
         self,
