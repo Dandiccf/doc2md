@@ -560,16 +560,25 @@ class DocumentPipeline:
         doc,
         page_break_placeholder: str = "",
         image_path_prefix: str = "",
-    ) -> str:
+    ) -> tuple[str, dict[str, str]]:
         """Export markdown in strict page order.
 
         Fallback for documents where Docling's tree structure produces wrong
         element ordering due to cross-page grouping.  Iterates elements
         page-by-page using ``iterate_items(page_no=…)`` and formats them
         as markdown, bypassing the tree-based serializer.
+
+        Returns ``(markdown_text, image_names)``, where ``image_names`` maps each
+        pictures's ``self_ref`` to the filename its reference uses.  The caller
+        writes the files from that mapping, so the reference and the file it
+        names come from *one* enumeration.  They used to come from two — this
+        loop, page by page, and a separate tree-order loop for the files — which
+        disagree by construction, since disagreeing about order is the entire
+        reason this branch exists.
         """
         parts: list[str] = []
         sorted_pages = sorted(doc.pages.keys())
+        image_names: dict[str, str] = {}
         pic_idx = 0
 
         for page_idx, page_no in enumerate(sorted_pages):
@@ -580,11 +589,24 @@ class DocumentPipeline:
             for element, _level in doc.iterate_items(page_no=page_no):
                 # -- Pictures --
                 if isinstance(element, PictureItem):
+                    # An item whose provenance spans two pages is yielded by
+                    # *both* page filters (docling matches with `any(prov.page_no
+                    # in page_nrs …)`).  Reuse the name so it stays one file with
+                    # one set of bytes, referenced from each page it appears on.
+                    self_ref = getattr(element, "self_ref", None)
+                    if self_ref is not None and self_ref in image_names:
+                        filename = image_names[self_ref]
+                    else:
+                        filename = f"picture_{pic_idx:03d}.png"
+                        pic_idx += 1
+                        if self_ref is not None:
+                            image_names[self_ref] = filename
+
                     if image_path_prefix:
                         prefix = image_path_prefix.rstrip("/")
-                        img_ref = f"{prefix}/picture_{pic_idx:03d}.png"
+                        img_ref = f"{prefix}/{filename}"
                     else:
-                        img_ref = f"images/picture_{pic_idx:03d}.png"
+                        img_ref = f"images/{filename}"
 
                     desc = ""
                     if (
@@ -611,12 +633,20 @@ class DocumentPipeline:
                         parts.append(f"![Image]({img_ref})")
 
                     parts.append("")
-                    pic_idx += 1
                     continue
 
                 # -- Tables --
                 if isinstance(element, TableItem):
-                    text = getattr(element, "text", "").strip()
+                    # TableItem has no ``text`` field at all, so the getattr
+                    # default this used to take was always "" and every table in
+                    # a page-misordered document was silently dropped — the whole
+                    # grid, not just its formatting.  Tender documents and case
+                    # files are exactly the kind that trip the fallback.
+                    try:
+                        text = element.export_to_markdown(doc).strip()
+                    except Exception as tbl_err:  # pragma: no cover - defensive
+                        logger.warning("Failed to render table: %s", tbl_err)
+                        text = ""
                     if text:
                         parts.append(text)
                     parts.append("")
@@ -644,7 +674,40 @@ class DocumentPipeline:
                     parts.append(text)
                 parts.append("")
 
-        return "\n".join(parts)
+        return "\n".join(parts), image_names
+
+    @staticmethod
+    def _write_page_ordered_images(
+        doc,
+        images_dir: Path,
+        image_names: dict[str, str],
+    ) -> None:
+        """Write the picture files the page-ordered markdown references.
+
+        ``image_names`` comes from ``_export_markdown_page_ordered`` and is keyed
+        on each picture's ``self_ref``, so a file is named by the same pass that
+        emitted the reference to it.  This used to be a second loop with its own
+        counter over a *different* traversal (tree order, not page order) that
+        advanced only on a successful save.  Both drifts are silent: the markdown
+        stays well-formed while its figures carry other figures' bytes — and with
+        AI descriptions on, the wrong description travels into the alt text and
+        the embeddings alongside them.
+        """
+        for element, _level in doc.iterate_items():
+            if not isinstance(element, PictureItem):
+                continue
+            filename = image_names.get(getattr(element, "self_ref", None))
+            if filename is None:
+                continue  # nothing references it; writing it would orphan a file
+            try:
+                img = element.get_image(doc)
+                if img is not None:
+                    img.save(images_dir / filename, format="PNG")
+            except Exception as img_err:
+                logger.warning("Failed to save image %s: %s", filename, img_err)
+                # A half-written PNG is worse than none: callers upload whatever
+                # is in the directory, not whatever the markdown references.
+                (images_dir / filename).unlink(missing_ok=True)
 
     # -- Engine resolution ----------------------------------------------------
 
@@ -830,6 +893,16 @@ class DocumentPipeline:
 
         # Detect cross-page ordering issues in Docling's document tree.
         _page_misordered = self._has_page_order_violation(conv_res.document)
+        if _page_misordered and not conv_res.document.pages:
+            # The fallback walks sorted(doc.pages) — with no pages it emits an
+            # empty document and loses everything. iterate_items(page_no=…) does
+            # not validate the page number, so nothing would have raised.
+            logger.warning(
+                "Page-order issue in %s but the document has no pages; "
+                "keeping the tree-ordered export",
+                source_name,
+            )
+            _page_misordered = False
         if _page_misordered:
             logger.warning(
                 "Detected page-order issue in %s; using page-ordered fallback",
@@ -837,7 +910,7 @@ class DocumentPipeline:
             )
 
         if _page_misordered:
-            md_text = self._export_markdown_page_ordered(
+            md_text, image_names = self._export_markdown_page_ordered(
                 conv_res.document,
                 page_break_placeholder=cfg.page_break_placeholder,
                 image_path_prefix=cfg.image_path_prefix,
@@ -847,48 +920,22 @@ class DocumentPipeline:
                 images_dir = output_dir / "images"
                 images_dir.mkdir(exist_ok=True)
                 result.images_dir = images_dir
-                pic_idx = 0
-                for element, _level in conv_res.document.iterate_items():
-                    if isinstance(element, PictureItem):
-                        try:
-                            img = element.get_image(conv_res.document)
-                            if img is not None:
-                                img.save(
-                                    images_dir / f"picture_{pic_idx:03d}.png",
-                                    format="PNG",
-                                )
-                                pic_idx += 1
-                        except Exception as img_err:
-                            logger.warning(
-                                "Failed to save image %d: %s", pic_idx, img_err,
-                            )
+                self._write_page_ordered_images(
+                    conv_res.document, images_dir, image_names,
+                )
         elif cfg.generate_images or cfg.do_picture_description:
-            images_dir = output_dir / "images"
-            images_dir.mkdir(exist_ok=True)
-            result.images_dir = images_dir
-
-            pic_idx = 0
-            for element, _level in conv_res.document.iterate_items():
-                if isinstance(element, PictureItem):
-                    try:
-                        img = element.get_image(conv_res.document)
-                        if img is not None:
-                            img.save(
-                                images_dir / f"picture_{pic_idx:03d}.png",
-                                format="PNG",
-                            )
-                            pic_idx += 1
-                    except Exception as img_err:
-                        logger.warning(
-                            "Failed to save image %d: %s", pic_idx, img_err,
-                        )
-
+            # No separate images/ directory here. Docling's own serializer both
+            # writes the files and emits the references, into
+            # ``<stem>_artifacts`` under names like image_000000_<hash>.png — so
+            # the picture_NNN.png copies this used to write alongside them were
+            # never referenced by the markdown, and left result.images_dir
+            # pointing at a directory whose filenames matched nothing whenever
+            # image_path_prefix was empty.
             if cfg.do_picture_description:
                 artifacts_dir = self._export_markdown_with_descriptions(
                     conv_res.document, md_path,
                 )
-                if cfg.image_path_prefix:
-                    result.images_dir = artifacts_dir
+                result.images_dir = artifacts_dir
             else:
                 conv_res.document.save_as_markdown(
                     md_path,
@@ -901,9 +948,9 @@ class DocumentPipeline:
                         md_text, cfg.image_path_prefix,
                     )
                     md_path.write_text(md_text, encoding="utf-8")
-                    artifacts_dir = output_dir / f"{md_path.stem}_artifacts"
-                    if artifacts_dir.exists():
-                        result.images_dir = artifacts_dir
+                artifacts_dir = output_dir / f"{md_path.stem}_artifacts"
+                if artifacts_dir.exists():
+                    result.images_dir = artifacts_dir
         else:
             md_text = conv_res.document.export_to_markdown(
                 page_break_placeholder=cfg.page_break_placeholder or None,
